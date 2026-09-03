@@ -1,0 +1,18 @@
+# Archivos del cliente (export original + reportes de referencia), no son codigo
+data/
+
+# Reportes generados por el script/la app, no son codigo fuente
+output/
+
+# Python
+__pycache__/
+*.pyc
+
+# Credenciales / configuracion sensible
+.env
+.env.*
+secrets.toml
+.streamlit/secrets.toml
+credentials.json
+*.key
+*.pem
