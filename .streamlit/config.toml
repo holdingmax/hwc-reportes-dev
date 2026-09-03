@@ -1,0 +1,11 @@
+# Config para correr detras del reverse proxy de Render (que a su vez esta
+# detras de Cloudflare). server.port/server.address se siguen pasando por
+# CLI en el Start Command (dependen de $PORT, que Render define en runtime).
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false
