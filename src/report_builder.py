@@ -13,6 +13,8 @@ from src.config import (
     COL_AEROLINEA,
     COL_CODIGO,
     COL_ESTACION,
+    EMPTY_SHEET_STYLE_HEADERS_ONLY,
+    EMPTY_SHEET_STYLE_PLACEHOLDER,
     EMPTY_STATION_TEXT,
     STATIONS,
 )
@@ -52,6 +54,18 @@ def _placeholder_sheet(text: str) -> pd.DataFrame:
     return pd.DataFrame(columns=[text])
 
 
+def _empty_sheet(empty_sheet_style: str, report_columns: list[str], placeholder_text: str) -> pd.DataFrame:
+    """Arma la hoja para un tipo de cargo/estacion sin ninguna fila.
+
+    "headers_only" arma la hoja vacia con los encabezados reales de columna
+    (sin ningun texto), tal como confirmo Cristian para Gol. El default
+    "placeholder_text" mantiene el texto explicativo de "sin movimiento".
+    """
+    if empty_sheet_style == EMPTY_SHEET_STYLE_HEADERS_ONLY:
+        return pd.DataFrame(columns=report_columns)
+    return _placeholder_sheet(placeholder_text)
+
+
 def build_airline_report(df: pd.DataFrame, airline_key: str) -> dict[str, pd.DataFrame]:
     """Devuelve {nombre_de_hoja: DataFrame} para la aerolinea pedida.
 
@@ -65,15 +79,16 @@ def build_airline_report(df: pd.DataFrame, airline_key: str) -> dict[str, pd.Dat
 
     airline_cfg = AIRLINE_CONFIGS[airline_key]
     airline_df = df[df[COL_AEROLINEA] == airline_cfg["match"]]
+    empty_sheet_style = airline_cfg.get("empty_sheet_style", EMPTY_SHEET_STYLE_PLACEHOLDER)
 
     sheets: dict[str, pd.DataFrame] = {}
     for charge_type_key in airline_cfg["charge_types"]:
         charge_cfg = CHARGE_TYPES[charge_type_key]
-        sheets.update(_build_charge_type_sheets(airline_df, charge_cfg))
+        sheets.update(_build_charge_type_sheets(airline_df, charge_cfg, empty_sheet_style))
     return sheets
 
 
-def _build_charge_type_sheets(airline_df: pd.DataFrame, charge_cfg: dict) -> dict[str, pd.DataFrame]:
+def _build_charge_type_sheets(airline_df: pd.DataFrame, charge_cfg: dict, empty_sheet_style: str) -> dict[str, pd.DataFrame]:
     amount_columns = charge_cfg["amount_columns"]
     report_columns = charge_cfg["report_columns"]
 
@@ -87,7 +102,8 @@ def _build_charge_type_sheets(airline_df: pd.DataFrame, charge_cfg: dict) -> dic
 
             sheet_name = f"{charge_cfg['sheet_prefix']} {station}"
             if filtered.empty:
-                filtered = _placeholder_sheet(EMPTY_STATION_TEXT.format(station=station))
+                placeholder_text = EMPTY_STATION_TEXT.format(station=station)
+                filtered = _empty_sheet(empty_sheet_style, report_columns, placeholder_text)
             result[sheet_name] = filtered
         return result
 
@@ -96,7 +112,8 @@ def _build_charge_type_sheets(airline_df: pd.DataFrame, charge_cfg: dict) -> dic
     filtered = _fix_codigo_column(filtered)
     sheet_name = charge_cfg["sheet_name"]
     if filtered.empty:
-        filtered = _placeholder_sheet(f"Sin movimiento de awbs con cargo {sheet_name}")
+        placeholder_text = f"Sin movimiento de awbs con cargo {sheet_name}"
+        filtered = _empty_sheet(empty_sheet_style, report_columns, placeholder_text)
     return {sheet_name: filtered}
 
 

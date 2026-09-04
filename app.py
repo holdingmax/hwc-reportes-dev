@@ -74,6 +74,15 @@ h1, h2, h3 { font-family: 'Inter', sans-serif; font-weight: 800; color: var(--hw
 [data-testid="stCaptionContainer"] { color: var(--hwc-text-muted) !important; }
 [data-testid="stWidgetLabel"] p { font-weight: 600; color: var(--hwc-text); font-size: 0.85rem; }
 
+/* --- Titulo principal, por encima del banner de marca --- */
+.hwc-page-title {
+    display: flex; align-items: center; gap: 0.7rem;
+    font-size: 2.6rem; font-weight: 800; color: var(--hwc-navy);
+    letter-spacing: -0.02em; line-height: 1.1;
+    margin: 0 0 1.2rem 0;
+}
+.hwc-page-title-icon { font-size: 2.3rem; line-height: 1; }
+
 /* --- Banner superior de marca --- */
 .hwc-hero {
     background: linear-gradient(135deg, var(--hwc-navy) 0%, var(--hwc-navy-light) 100%);
@@ -94,9 +103,7 @@ h1, h2, h3 { font-family: 'Inter', sans-serif; font-weight: 800; color: var(--hw
     background: rgba(201, 162, 39, 0.15);
     border-radius: 50%;
 }
-.hwc-hero-brand { font-size: 1.55rem; font-weight: 800; color: #fff !important; letter-spacing: 0.01em; margin: 0; position: relative; }
-.hwc-hero-brand span { color: var(--hwc-gold) !important; }
-.hwc-hero-sub { color: rgba(255, 255, 255, 0.75) !important; font-size: 0.85rem; margin-top: 0.35rem; position: relative; }
+.hwc-hero-sub { color: rgba(255, 255, 255, 0.75) !important; font-size: 0.85rem; margin: 0; position: relative; }
 .hwc-hero-tag {
     display: inline-block; margin-top: 0.9rem;
     background: rgba(201, 162, 39, 0.16); border: 1px solid rgba(201, 162, 39, 0.45);
@@ -215,12 +222,19 @@ div[data-baseweb="select"] > div { border-radius: 8px !important; }
 )
 
 # ---------------------------------------------------------------------------
+# Titulo principal (jerarquia por encima del banner de marca, sin tocarlo)
+# ---------------------------------------------------------------------------
+st.markdown(
+    '<div class="hwc-page-title"><span class="hwc-page-title-icon">✈️</span>Handyway Cargo</div>',
+    unsafe_allow_html=True,
+)
+
+# ---------------------------------------------------------------------------
 # Banner de marca
 # ---------------------------------------------------------------------------
 st.markdown(
     """
 <div class="hwc-hero">
-    <p class="hwc-hero-brand">✈️ Handyway<span> Cargo</span></p>
     <p class="hwc-hero-sub">Generá reportes automáticos por aerolínea a partir del archivo original de Handyway Cargo.</p>
     <span class="hwc-hero-tag">Automatización de reportes</span>
 </div>

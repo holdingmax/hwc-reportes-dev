@@ -52,6 +52,13 @@ CHARGE_TYPES = {
     },
 }
 
+# Como tratar una hoja sin ninguna fila (estacion sin movimiento, o tipo de
+# cargo agrupado sin datos): "placeholder_text" arma una hoja con una unica
+# celda de texto explicando que no hay movimiento; "headers_only" arma la
+# hoja vacia, solo con los encabezados de columna, sin ningun texto.
+EMPTY_SHEET_STYLE_PLACEHOLDER = "placeholder_text"
+EMPTY_SHEET_STYLE_HEADERS_ONLY = "headers_only"
+
 # Que tipos de cargo se facturan a cada aerolinea. Esto es una decision de
 # negocio, no algo que se pueda inferir de los datos: por ejemplo GOL tiene
 # filas con Trans.E. != 0 en el archivo original pero ese cargo no se le
@@ -60,10 +67,18 @@ AIRLINE_CONFIGS = {
     "avianca": {
         "match": "AVIANCA",
         "charge_types": ["delivery_fee", "trans_electronica"],
+        # Sin confirmar todavia si Avianca quiere el mismo criterio que Gol
+        # (hoja vacia sin texto). Hasta que lo confirmen, mantiene el texto
+        # explicativo. Para cambiarlo: EMPTY_SHEET_STYLE_HEADERS_ONLY.
+        "empty_sheet_style": EMPTY_SHEET_STYLE_PLACEHOLDER,
     },
     "gol": {
         "match": "GOL",
         "charge_types": ["delivery_fee", "collect"],
+        # Confirmado por Cristian (cliente): para Gol, las hojas sin
+        # movimiento quedan vacias (solo encabezados), sin el texto de
+        # "Sin movimiento de awbs...".
+        "empty_sheet_style": EMPTY_SHEET_STYLE_HEADERS_ONLY,
     },
     # LATAM: PENDIENTE DE CONFIRMAR CON EL CLIENTE.
     # No hay un reporte de referencia armado a mano para LATAM (como si hay
@@ -79,6 +94,7 @@ AIRLINE_CONFIGS = {
     # "latam": {
     #     "match": "LATAM",
     #     "charge_types": ["delivery_fee", "trans_electronica", "collect"],
+    #     "empty_sheet_style": EMPTY_SHEET_STYLE_PLACEHOLDER,
     # },
 }
 
