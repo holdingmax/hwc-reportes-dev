@@ -71,6 +71,15 @@ FLOW_LIQUIDACION = "liquidacion"
 # negocio, no algo que se pueda inferir de los datos: por ejemplo GOL tiene
 # filas con Trans.E. != 0 en el archivo original pero ese cargo no se le
 # reporta (se lo gestiona por otra via).
+# Estaciones donde el dato que se muestra HOY no esta validado contra
+# ningun archivo de referencia real. No se descartan ni se bloquean (ver
+# nota junto a cada caso en report_builder.py / liquidacion_builder.py):
+# es una red de seguridad para que la interfaz avise en vez de mostrar un
+# numero sin confirmar con total confianza. Facil de vaciar (lista vacia)
+# a medida que el cliente confirme cada estacion.
+AVIANCA_UNCONFIRMED_STATIONS = ["ROS", "MDZ", "AEP"]
+LATAM_UNCONFIRMED_STATIONS = ["COR", "ROS", "MDZ", "NQN"]
+
 AIRLINE_CONFIGS = {
     "avianca": {
         "match": "AVIANCA",
@@ -80,6 +89,7 @@ AIRLINE_CONFIGS = {
         # (hoja vacia sin texto). Hasta que lo confirmen, mantiene el texto
         # explicativo. Para cambiarlo: EMPTY_SHEET_STYLE_HEADERS_ONLY.
         "empty_sheet_style": EMPTY_SHEET_STYLE_PLACEHOLDER,
+        "unconfirmed_stations": AVIANCA_UNCONFIRMED_STATIONS,
     },
     "gol": {
         "match": "GOL",
@@ -96,6 +106,7 @@ AIRLINE_CONFIGS = {
         # liquidacion_builder.py (ver LATAM_* mas abajo). No hay charge_types
         # ni empty_sheet_style aca porque esas opciones son del otro flujo.
         "flow": FLOW_LIQUIDACION,
+        "unconfirmed_stations": LATAM_UNCONFIRMED_STATIONS,
     },
 }
 

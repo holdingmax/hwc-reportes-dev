@@ -18,9 +18,14 @@ import io
 import streamlit as st
 
 from src.config import AIRLINE_CONFIGS, CHARGE_TYPES, FLOW_LIQUIDACION
-from src.liquidacion_builder import build_latam_detalle, build_latam_resumen, write_liquidacion
+from src.liquidacion_builder import (
+    build_latam_detalle,
+    build_latam_resumen,
+    detect_unconfirmed_station_activity,
+    write_liquidacion,
+)
 from src.loader import load_original
-from src.report_builder import build_airline_report, write_report
+from src.report_builder import build_airline_report, detect_unconfirmed_activity, write_report
 
 CHARGE_TYPE_LABELS = {
     "delivery_fee": ("📦", "Delivery Fee"),
@@ -295,6 +300,17 @@ def _render_liquidacion_result(uploaded_file) -> tuple[object, dict]:
 
     st.success("Liquidación generada correctamente.")
 
+    unconfirmed_stations = AIRLINE_CONFIGS["latam"].get("unconfirmed_stations", [])
+    if unconfirmed_stations:
+        activity = detect_unconfirmed_station_activity(df, unconfirmed_stations)
+        if activity:
+            detalle_txt = ", ".join(f"{station} ({_money(info['total'])})" for station, info in activity.items())
+            st.warning(
+                f"⚠️ Se detectaron movimientos de LATAM sin incluir en esta liquidación "
+                f"(estación no validada todavía): {detalle_txt}. Ese monto queda fuera de "
+                f"TOTAL PERIODO — no se está facturando."
+            )
+
     st.markdown(
         f'<div class="hwc-group-card">'
         f'<div class="hwc-group-title">📑 Detalle de Facturación</div>'
@@ -350,6 +366,17 @@ if generate:
                 buffer.seek(0)
 
             st.success("Reporte generado correctamente.")
+
+            unconfirmed_stations = airline_cfg.get("unconfirmed_stations", [])
+            if unconfirmed_stations:
+                activity = detect_unconfirmed_activity(sheets, unconfirmed_stations)
+                if activity:
+                    estaciones = ", ".join(activity)
+                    st.warning(
+                        f"⚠️ Se detectaron movimientos en {estaciones} para {airline_key.upper()}. "
+                        f"La tarifa aplicada ahí todavía no está confirmada con el cliente — "
+                        f"revisá los montos manualmente antes de usarlos."
+                    )
 
             for charge_type_key in airline_cfg["charge_types"]:
                 icon, label = CHARGE_TYPE_LABELS.get(charge_type_key, ("📁", charge_type_key))

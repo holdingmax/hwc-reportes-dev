@@ -150,6 +150,26 @@ def _build_charge_type_sheets(
     return {sheet_name: filtered}
 
 
+def detect_unconfirmed_activity(sheets: dict[str, pd.DataFrame], unconfirmed_stations: list[str]) -> dict[str, int]:
+    """Red de seguridad: avisa si hay movimiento real en una estacion sin validar.
+
+    El reporte simple NO descarta filas de estaciones sin confirmar: las
+    incluye igual con el dato bruto (ver AVIANCA_DELIVERY_FEE_USD_POR_ESTACION
+    en config.py, que deja "Dry.Fee" sin ajustar para esas estaciones). Esta
+    funcion solo detecta si eso paso, para que la interfaz lo muestre como
+    advertencia en vez de presentarlo con la misma confianza que EZE/COR.
+
+    Devuelve {estacion: cantidad de filas} solo para las estaciones de
+    unconfirmed_stations que tienen al menos una fila en algun sheet.
+    """
+    activity: dict[str, int] = {}
+    for station in unconfirmed_stations:
+        n_rows = sum(len(df) for name, df in sheets.items() if name.endswith(f" {station}"))
+        if n_rows > 0:
+            activity[station] = n_rows
+    return activity
+
+
 def write_report(sheets: dict[str, pd.DataFrame], output_path: str) -> None:
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         for sheet_name, sheet_df in sheets.items():

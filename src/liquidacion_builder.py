@@ -171,6 +171,41 @@ def _write_compensacion_sheet(writer: pd.ExcelWriter) -> None:
     ws.column_dimensions["A"].width = 65
 
 
+def detect_unconfirmed_station_activity(
+    df: pd.DataFrame,
+    unconfirmed_stations: list[str],
+    period: tuple[str, str] | None = None,
+) -> dict[str, dict]:
+    """Red de seguridad: detecta movimiento real de LATAM en estaciones sin validar.
+
+    A diferencia de Avianca, esta liquidacion SI descarta esas filas (ver
+    build_latam_detalle, que filtra a LATAM_LIQUIDACION_STATION): no entran
+    a ningun total del Resumen. Esta funcion las detecta aparte para poder
+    avisar que quedaron afuera con un monto real, en vez de omitirlas en
+    silencio como hace hoy build_latam_detalle.
+
+    Devuelve {estacion: {"filas": n, "total": suma de las 4 columnas de
+    cargo}} solo para las estaciones con al menos una fila con cargo en el
+    periodo detectado.
+    """
+    latam_df = df[df[COL_AEROLINEA] == "LATAM"]
+    if period is None:
+        period = detect_period(latam_df)
+    latam_df = _filter_period(latam_df, period)
+
+    raw_columns = list(LATAM_DETALLE_CHARGE_COLUMNS.keys())
+    activity: dict[str, dict] = {}
+    for station in unconfirmed_stations:
+        station_df = latam_df[latam_df[COL_ESTACION] == station]
+        mask = _nonzero_mask(station_df, raw_columns)
+        matched = station_df[mask]
+        if matched.empty:
+            continue
+        total = float(sum(pd.to_numeric(matched[c], errors="coerce").fillna(0).sum() for c in raw_columns))
+        activity[station] = {"filas": len(matched), "total": total}
+    return activity
+
+
 def write_liquidacion(detalle: pd.DataFrame, resumen: dict, output_path) -> None:
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         _write_resumen_sheet(writer, resumen)
