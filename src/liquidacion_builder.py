@@ -3,17 +3,16 @@
 LATAM no encaja en el flujo simple de report_builder.py (una hoja por tipo
 de cargo/estacion): necesita una liquidacion con 3 hojas -- Resumen
 Facturacion, Detalle de Facturacion y Compensacion -- con una formula de
-sub-facturas e IVA. Por eso vive en un modulo aparte, aunque reutiliza dos
-utilidades genericas de report_builder.py (no son especificas del reporte
-simple): _nonzero_mask y _fix_codigo_column.
+sub-facturas e IVA. Por eso vive en un modulo aparte, aunque reutiliza
+utilidades genericas: _nonzero_mask/_fix_codigo_column de report_builder.py,
+y deteccion/filtro de periodo de period_utils.py (compartida con el
+reporte simple de Avianca/Gol).
 
 Esta liquidacion esta validada unicamente para LATAM_LIQUIDACION_STATION
 (EZE), contra el archivo de referencia real del cliente. No calcula
 compensacion (ver nota en config.py junto a LATAM_SUBFACTURA_LA): esa parte
 sigue siendo manual, tal como confirmo el cliente.
 """
-
-import re
 
 import pandas as pd
 from openpyxl.styles import Font
@@ -33,39 +32,28 @@ from src.config import (
     LATAM_SUBFACTURA_4M,
     LATAM_SUBFACTURA_LA,
 )
+from src.period_utils import Period, detect_period, excluded_by_period, filter_by_period
 from src.report_builder import _fix_codigo_column, _nonzero_mask
 
-# Sufijo de Cod.Vuelo: ej. "LA8130_01JUL26" -> dia=01, mes=JUL, anio=26.
-_PERIOD_PATTERN = re.compile(r"_(\d{2})([A-Za-z]{3})(\d{2})$")
 
+def detect_latam_period_exclusions(df: pd.DataFrame) -> tuple[Period, pd.DataFrame]:
+    """Periodo dominante de LATAM (todas las estaciones) y las filas que quedan afuera.
 
-def _extract_period(cod_vuelo: object) -> tuple[str, str] | None:
-    match = _PERIOD_PATTERN.search(str(cod_vuelo))
-    if not match:
-        return None
-    return match.group(2).upper(), match.group(3)
+    Mismo criterio que detect_period_exclusions de report_builder.py para
+    Avianca/Gol: se mira TODA la aerolinea, no solo LATAM_LIQUIDACION_STATION
+    (EZE) -- una fila de COR/ROS/MDZ/NQN fuera de periodo tambien tiene que
+    quedar reflejada en el aviso, aunque esa estacion ya este excluida de la
+    liquidacion por otro motivo (ver detect_unconfirmed_station_activity).
 
-
-def detect_period(df: pd.DataFrame) -> tuple[str, str]:
-    """Autodetecta el periodo (mes, anio) como el mas frecuente en Cod.Vuelo.
-
-    "archivo original.xlsx" no viene filtrado por periodo: puede traer
-    sueltas algunas filas de meses anteriores (vuelos tardios que quedaron
-    en el export). Se asume que el periodo real de la liquidacion es el que
-    concentra la mayoria de las filas.
+    Expuesta para que el caller (ej. app.py) conozca el periodo detectado --
+    para el nombre de archivo, para armar el aviso de filas excluidas, y
+    para pasarselo explicitamente a build_latam_detalle/
+    detect_unconfirmed_station_activity y evitar detectarlo mas de una vez.
     """
-    periods = df[COL_COD_VUELO].map(_extract_period).dropna()
-    if periods.empty:
-        raise ValueError(
-            "No se pudo detectar el periodo: ningun Cod.Vuelo tiene el "
-            "formato esperado (ej. 'LA8130_01JUL26')."
-        )
-    return periods.value_counts().idxmax()
-
-
-def _filter_period(df: pd.DataFrame, period: tuple[str, str]) -> pd.DataFrame:
-    mask = df[COL_COD_VUELO].map(_extract_period) == period
-    return df[mask]
+    latam_df = df[df[COL_AEROLINEA] == "LATAM"]
+    period = detect_period(latam_df)
+    excluded = excluded_by_period(latam_df, period)
+    return period, excluded
 
 
 def build_latam_detalle(df: pd.DataFrame, period: tuple[str, str] | None = None) -> pd.DataFrame:
@@ -82,7 +70,7 @@ def build_latam_detalle(df: pd.DataFrame, period: tuple[str, str] | None = None)
 
     if period is None:
         period = detect_period(latam_df)
-    latam_df = _filter_period(latam_df, period)
+    latam_df = filter_by_period(latam_df, period)
 
     raw_columns = list(LATAM_DETALLE_CHARGE_COLUMNS.keys())
     mask = _nonzero_mask(latam_df, raw_columns)
@@ -187,11 +175,16 @@ def detect_unconfirmed_station_activity(
     Devuelve {estacion: {"filas": n, "total": suma de las 4 columnas de
     cargo}} solo para las estaciones con al menos una fila con cargo en el
     periodo detectado.
+
+    OJO: se filtra por periodo antes de sumar por estacion, a proposito.
+    Una fila fuera de periodo (de cualquier estacion) ya queda contemplada
+    por detect_latam_period_exclusions -- si tambien se contara aca, el
+    mismo monto aparecería duplicado en dos avisos distintos.
     """
     latam_df = df[df[COL_AEROLINEA] == "LATAM"]
     if period is None:
         period = detect_period(latam_df)
-    latam_df = _filter_period(latam_df, period)
+    latam_df = filter_by_period(latam_df, period)
 
     raw_columns = list(LATAM_DETALLE_CHARGE_COLUMNS.keys())
     activity: dict[str, dict] = {}

@@ -14,18 +14,26 @@ contenedores puntuales).
 """
 
 import io
+import os
 
 import streamlit as st
 
-from src.config import AIRLINE_CONFIGS, CHARGE_TYPES, FLOW_LIQUIDACION
+from src.config import AIRLINE_CONFIGS, CHARGE_TYPES, COL_COD_VUELO, FLOW_LIQUIDACION
 from src.liquidacion_builder import (
     build_latam_detalle,
     build_latam_resumen,
+    detect_latam_period_exclusions,
     detect_unconfirmed_station_activity,
     write_liquidacion,
 )
 from src.loader import load_original
-from src.report_builder import build_airline_report, detect_unconfirmed_activity, write_report
+from src.period_utils import extract_period, period_label, period_slug
+from src.report_builder import (
+    build_airline_report,
+    detect_period_exclusions,
+    detect_unconfirmed_activity,
+    write_report,
+)
 
 CHARGE_TYPE_LABELS = {
     "delivery_fee": ("📦", "Delivery Fee"),
@@ -228,6 +236,44 @@ div[data-baseweb="select"] > div { border-radius: 8px !important; }
 )
 
 # ---------------------------------------------------------------------------
+# Acceso restringido (opcional): compara contra APP_PASSWORD, una variable
+# de entorno configurada en Render (Settings > Environment) -- nunca
+# hardcodeada en el codigo. Si no esta configurada (ej. en local), no
+# bloquea a nadie. Es una traba basica para que el link no quede abierto a
+# cualquiera, no un sistema de login: no hay sesion persistente entre
+# pestañas o refrescos de pagina (st.session_state vive en esa conexion).
+# ---------------------------------------------------------------------------
+APP_PASSWORD = os.environ.get("APP_PASSWORD")
+
+
+def _check_password() -> bool:
+    if not APP_PASSWORD:
+        return True
+    if st.session_state.get("hwc_authenticated"):
+        return True
+
+    st.markdown(
+        '<div class="hwc-page-title"><span class="hwc-page-title-icon">✈️</span>Handyway Cargo</div>',
+        unsafe_allow_html=True,
+    )
+    with st.container(border=True, key="card_login"):
+        st.markdown('<div class="hwc-group-title">🔒 Acceso restringido</div>', unsafe_allow_html=True)
+        password = st.text_input(
+            "Contraseña", type="password", label_visibility="collapsed", placeholder="Contraseña"
+        )
+        if password:
+            if password == APP_PASSWORD:
+                st.session_state["hwc_authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta.")
+    return False
+
+
+if not _check_password():
+    st.stop()
+
+# ---------------------------------------------------------------------------
 # Titulo principal (jerarquia por encima del banner de marca, sin tocarlo)
 # ---------------------------------------------------------------------------
 st.markdown(
@@ -283,7 +329,7 @@ def _money(value: float) -> str:
     return f"$ {value:,.2f}"
 
 
-def _render_liquidacion_result(uploaded_file) -> tuple[object, dict]:
+def _render_liquidacion_result(uploaded_file) -> tuple[object, dict, tuple[str, str]]:
     """Corre el flujo de liquidacion de LATAM y muestra su propio resumen.
 
     A diferencia del reporte simple (conteo de filas por hoja), acá lo que
@@ -291,7 +337,8 @@ def _render_liquidacion_result(uploaded_file) -> tuple[object, dict]:
     """
     with st.spinner("Generando liquidación..."):
         df = load_original(uploaded_file)
-        detalle = build_latam_detalle(df)
+        period, excluded = detect_latam_period_exclusions(df)
+        detalle = build_latam_detalle(df, period=period)
         resumen = build_latam_resumen(detalle)
 
         buffer = io.BytesIO()
@@ -299,10 +346,20 @@ def _render_liquidacion_result(uploaded_file) -> tuple[object, dict]:
         buffer.seek(0)
 
     st.success("Liquidación generada correctamente.")
+    st.caption(f"Período detectado: {period_label(period)}")
+
+    if not excluded.empty:
+        breakdown = excluded[COL_COD_VUELO].map(extract_period).value_counts()
+        detalle_txt = ", ".join(f"{n} de {period_label(p)}" for p, n in breakdown.items())
+        fila_word = "fila" if len(excluded) == 1 else "filas"
+        st.warning(
+            f"⚠️ Se excluyeron {len(excluded)} {fila_word} fuera del período detectado "
+            f"({period_label(period)}) de LATAM: {detalle_txt}."
+        )
 
     unconfirmed_stations = AIRLINE_CONFIGS["latam"].get("unconfirmed_stations", [])
     if unconfirmed_stations:
-        activity = detect_unconfirmed_station_activity(df, unconfirmed_stations)
+        activity = detect_unconfirmed_station_activity(df, unconfirmed_stations, period=period)
         if activity:
             detalle_txt = ", ".join(f"{station} ({_money(info['total'])})" for station, info in activity.items())
             st.warning(
@@ -342,7 +399,7 @@ def _render_liquidacion_result(uploaded_file) -> tuple[object, dict]:
         unsafe_allow_html=True,
     )
 
-    return buffer, resumen
+    return buffer, resumen, period
 
 
 # ---------------------------------------------------------------------------
@@ -355,17 +412,28 @@ if generate:
         airline_cfg = AIRLINE_CONFIGS[airline_key]
 
         if airline_cfg.get("flow") == FLOW_LIQUIDACION:
-            buffer, _ = _render_liquidacion_result(uploaded_file)
+            buffer, _, period = _render_liquidacion_result(uploaded_file)
         else:
             with st.spinner("Generando reporte..."):
                 df = load_original(uploaded_file)
-                sheets = build_airline_report(df, airline_key)
+                period, excluded = detect_period_exclusions(df, airline_key)
+                sheets = build_airline_report(df, airline_key, period=period)
 
                 buffer = io.BytesIO()
                 write_report(sheets, buffer)
                 buffer.seek(0)
 
             st.success("Reporte generado correctamente.")
+            st.caption(f"Período detectado: {period_label(period)}")
+
+            if not excluded.empty:
+                breakdown = excluded[COL_COD_VUELO].map(extract_period).value_counts()
+                detalle_txt = ", ".join(f"{n} de {period_label(p)}" for p, n in breakdown.items())
+                fila_word = "fila" if len(excluded) == 1 else "filas"
+                st.warning(
+                    f"⚠️ Se excluyeron {len(excluded)} {fila_word} fuera del período detectado "
+                    f"({period_label(period)}) del reporte de {airline_key.upper()}: {detalle_txt}."
+                )
 
             unconfirmed_stations = airline_cfg.get("unconfirmed_stations", [])
             if unconfirmed_stations:
@@ -407,7 +475,7 @@ if generate:
         st.download_button(
             label="⬇️ Descargar reporte",
             data=buffer,
-            file_name=f"{airline_key}.xlsx",
+            file_name=f"{airline_key}_{period_slug(period)}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
         )

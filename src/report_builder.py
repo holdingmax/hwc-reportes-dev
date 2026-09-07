@@ -24,6 +24,7 @@ from src.config import (
     EMPTY_STATION_TEXT,
     STATIONS,
 )
+from src.period_utils import Period, detect_period, excluded_by_period, filter_by_period
 
 
 def _nonzero_mask(df: pd.DataFrame, amount_columns: list[str]) -> pd.Series:
@@ -88,19 +89,46 @@ def _empty_sheet(empty_sheet_style: str, report_columns: list[str], placeholder_
     return _placeholder_sheet(placeholder_text)
 
 
-def build_airline_report(df: pd.DataFrame, airline_key: str) -> dict[str, pd.DataFrame]:
-    """Devuelve {nombre_de_hoja: DataFrame} para la aerolinea pedida.
-
-    airline_key es una clave de AIRLINE_CONFIGS (ej. "avianca", "gol").
-    """
+def _airline_rows(df: pd.DataFrame, airline_key: str) -> pd.DataFrame:
     if airline_key not in AIRLINE_CONFIGS:
         raise ValueError(
             f"Aerolinea desconocida: {airline_key!r}. "
             f"Opciones disponibles: {sorted(AIRLINE_CONFIGS)}"
         )
-
     airline_cfg = AIRLINE_CONFIGS[airline_key]
-    airline_df = df[df[COL_AEROLINEA] == airline_cfg["match"]]
+    return df[df[COL_AEROLINEA] == airline_cfg["match"]]
+
+
+def detect_period_exclusions(df: pd.DataFrame, airline_key: str) -> tuple[Period, pd.DataFrame]:
+    """Detecta el periodo dominante de esta aerolinea y las filas que quedan afuera.
+
+    "archivo original.xlsx" no viene filtrado por periodo: puede traer
+    sueltas algunas filas de meses anteriores. build_airline_report ya las
+    excluye (ver su parametro period); esta funcion expone el mismo
+    periodo detectado y las filas excluidas por separado, para poder
+    avisarlo en la interfaz y para nombrar el archivo de salida.
+    """
+    airline_df = _airline_rows(df, airline_key)
+    period = detect_period(airline_df)
+    excluded = excluded_by_period(airline_df, period)
+    return period, excluded
+
+
+def build_airline_report(df: pd.DataFrame, airline_key: str, period: Period | None = None) -> dict[str, pd.DataFrame]:
+    """Devuelve {nombre_de_hoja: DataFrame} para la aerolinea pedida.
+
+    airline_key es una clave de AIRLINE_CONFIGS (ej. "avianca", "gol").
+    period es (mes, anio) ej. ("JUL", "26"); si es None se autodetecta
+    (ver detect_period_exclusions si ademas se necesita saber que filas
+    quedaron afuera de ese periodo).
+    """
+    airline_df = _airline_rows(df, airline_key)  # valida airline_key
+    airline_cfg = AIRLINE_CONFIGS[airline_key]
+
+    if period is None:
+        period = detect_period(airline_df)
+    airline_df = filter_by_period(airline_df, period)
+
     empty_sheet_style = airline_cfg.get("empty_sheet_style", EMPTY_SHEET_STYLE_PLACEHOLDER)
 
     sheets: dict[str, pd.DataFrame] = {}
