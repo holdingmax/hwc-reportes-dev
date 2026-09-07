@@ -17,7 +17,8 @@ import io
 
 import streamlit as st
 
-from src.config import AIRLINE_CONFIGS, CHARGE_TYPES
+from src.config import AIRLINE_CONFIGS, CHARGE_TYPES, FLOW_LIQUIDACION
+from src.liquidacion_builder import build_latam_detalle, build_latam_resumen, write_liquidacion
 from src.loader import load_original
 from src.report_builder import build_airline_report, write_report
 
@@ -273,6 +274,61 @@ def _sheets_for_charge_type(sheets: dict, charge_type_key: str) -> dict:
     return {name: sheets[name]} if name in sheets else {}
 
 
+def _money(value: float) -> str:
+    return f"$ {value:,.2f}"
+
+
+def _render_liquidacion_result(uploaded_file) -> tuple[object, dict]:
+    """Corre el flujo de liquidacion de LATAM y muestra su propio resumen.
+
+    A diferencia del reporte simple (conteo de filas por hoja), acá lo que
+    importa mostrar son los totales del Resumen Facturación.
+    """
+    with st.spinner("Generando liquidación..."):
+        df = load_original(uploaded_file)
+        detalle = build_latam_detalle(df)
+        resumen = build_latam_resumen(detalle)
+
+        buffer = io.BytesIO()
+        write_liquidacion(detalle, resumen, buffer)
+        buffer.seek(0)
+
+    st.success("Liquidación generada correctamente.")
+
+    st.markdown(
+        f'<div class="hwc-group-card">'
+        f'<div class="hwc-group-title">📑 Detalle de Facturación</div>'
+        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
+        f'Guías con cargo (EZE)<span class="hwc-count">{len(detalle)} filas</span></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f'<div class="hwc-group-card">'
+        f'<div class="hwc-group-title">🧾 Resumen Facturación</div>'
+        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
+        f'TOTAL LA (sin IVA)<span class="hwc-count">{_money(resumen["total_la"])}</span></div>'
+        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
+        f'TOTAL 4M (con IVA)<span class="hwc-count">{_money(resumen["total_4m"])}</span></div>'
+        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
+        f'TOTAL PERIODO<span class="hwc-count">{_money(resumen["total_periodo"])}</span></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f'<div class="hwc-group-card">'
+        f'<div class="hwc-group-title">📝 Compensación</div>'
+        f'<div class="hwc-row hwc-row-empty"><span class="hwc-dot hwc-dot-empty">–</span>'
+        f'pendiente de carga manual para este período</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    return buffer, resumen
+
+
 # ---------------------------------------------------------------------------
 # Seccion 3: resultado
 # ---------------------------------------------------------------------------
@@ -280,42 +336,46 @@ if generate:
     with st.container(border=True, key="card_result"):
         st.markdown('<div class="hwc-step"><span class="hwc-step-num">3</span>📊 Resultado</div>', unsafe_allow_html=True)
 
-        with st.spinner("Generando reporte..."):
-            df = load_original(uploaded_file)
-            sheets = build_airline_report(df, airline_key)
-
-            buffer = io.BytesIO()
-            write_report(sheets, buffer)
-            buffer.seek(0)
-
-        st.success("Reporte generado correctamente.")
-
         airline_cfg = AIRLINE_CONFIGS[airline_key]
-        for charge_type_key in airline_cfg["charge_types"]:
-            icon, label = CHARGE_TYPE_LABELS.get(charge_type_key, ("📁", charge_type_key))
-            group_sheets = _sheets_for_charge_type(sheets, charge_type_key)
 
-            rows_html = ""
-            for sheet_name, sheet_df in group_sheets.items():
-                n_rows = len(sheet_df)
-                if n_rows == 0:
-                    rows_html += (
-                        f'<div class="hwc-row hwc-row-empty">'
-                        f'<span class="hwc-dot hwc-dot-empty">–</span>{sheet_name} · sin movimiento</div>'
-                    )
-                else:
-                    rows_html += (
-                        f'<div class="hwc-row hwc-row-active">'
-                        f'<span class="hwc-dot hwc-dot-active">✓</span>{sheet_name}'
-                        f'<span class="hwc-count">{n_rows} filas</span></div>'
-                    )
+        if airline_cfg.get("flow") == FLOW_LIQUIDACION:
+            buffer, _ = _render_liquidacion_result(uploaded_file)
+        else:
+            with st.spinner("Generando reporte..."):
+                df = load_original(uploaded_file)
+                sheets = build_airline_report(df, airline_key)
 
-            st.markdown(
-                f'<div class="hwc-group-card">'
-                f'<div class="hwc-group-title">{icon} {label}</div>'
-                f'{rows_html}</div>',
-                unsafe_allow_html=True,
-            )
+                buffer = io.BytesIO()
+                write_report(sheets, buffer)
+                buffer.seek(0)
+
+            st.success("Reporte generado correctamente.")
+
+            for charge_type_key in airline_cfg["charge_types"]:
+                icon, label = CHARGE_TYPE_LABELS.get(charge_type_key, ("📁", charge_type_key))
+                group_sheets = _sheets_for_charge_type(sheets, charge_type_key)
+
+                rows_html = ""
+                for sheet_name, sheet_df in group_sheets.items():
+                    n_rows = len(sheet_df)
+                    if n_rows == 0:
+                        rows_html += (
+                            f'<div class="hwc-row hwc-row-empty">'
+                            f'<span class="hwc-dot hwc-dot-empty">–</span>{sheet_name} · sin movimiento</div>'
+                        )
+                    else:
+                        rows_html += (
+                            f'<div class="hwc-row hwc-row-active">'
+                            f'<span class="hwc-dot hwc-dot-active">✓</span>{sheet_name}'
+                            f'<span class="hwc-count">{n_rows} filas</span></div>'
+                        )
+
+                st.markdown(
+                    f'<div class="hwc-group-card">'
+                    f'<div class="hwc-group-title">{icon} {label}</div>'
+                    f'{rows_html}</div>',
+                    unsafe_allow_html=True,
+                )
 
         st.download_button(
             label="⬇️ Descargar reporte",

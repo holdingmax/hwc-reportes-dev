@@ -3,11 +3,13 @@
 Uso:
     python -m src.main --airline avianca
     python -m src.main --airline gol --input "data/archivo original.xlsx" --output "output/gol.xlsx"
+    python -m src.main --airline latam
 """
 
 import argparse
 
-from src.config import AIRLINE_CONFIGS
+from src.config import AIRLINE_CONFIGS, FLOW_LIQUIDACION
+from src.liquidacion_builder import build_latam_detalle, build_latam_resumen, write_liquidacion
 from src.loader import load_original
 from src.report_builder import build_airline_report, write_report
 
@@ -20,8 +22,20 @@ def main() -> None:
     args = parser.parse_args()
 
     output_path = args.output or f"output/{args.airline}.xlsx"
-
     df = load_original(args.input)
+
+    if AIRLINE_CONFIGS[args.airline].get("flow") == FLOW_LIQUIDACION:
+        detalle = build_latam_detalle(df)
+        resumen = build_latam_resumen(detalle)
+        write_liquidacion(detalle, resumen, output_path)
+
+        print(f"Liquidación generada en: {output_path}")
+        print(f"  - Detalle de Facturación: {len(detalle)} filas")
+        print(f"  - TOTAL LA (sin IVA): {resumen['total_la']:,.2f}")
+        print(f"  - TOTAL 4M (con IVA): {resumen['total_4m']:,.2f}")
+        print(f"  - TOTAL PERIODO: {resumen['total_periodo']:,.2f}")
+        return
+
     sheets = build_airline_report(df, args.airline)
     write_report(sheets, output_path)
 

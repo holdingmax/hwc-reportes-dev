@@ -1,18 +1,24 @@
 """Armado de las hojas del reporte filtrado por aerolinea.
 
-Esta etapa solo filtra, selecciona y agrupa columnas: no calcula tarifas,
-splits USD/ARS ni IVA. Eso queda para una segunda etapa una vez confirmada
-la tabla de tarifas con el cliente.
+Esta etapa filtra, selecciona y agrupa columnas: no calcula tarifas, splits
+USD/ARS ni IVA (eso queda para una segunda etapa una vez confirmada la
+tabla de tarifas con el cliente). La unica excepcion es el Delivery Fee de
+Avianca, que en las estaciones confirmadas no depende de ninguna tabla de
+tarifas sino de un monto fijo por guia (ver
+AVIANCA_DELIVERY_FEE_USD_POR_ESTACION en config.py).
 """
 
 import pandas as pd
 
 from src.config import (
     AIRLINE_CONFIGS,
+    AVIANCA_DELIVERY_FEE_USD_POR_ESTACION,
     CHARGE_TYPES,
     COL_AEROLINEA,
     COL_CODIGO,
+    COL_DRY_FEE,
     COL_ESTACION,
+    COL_TPO_CAMBIO,
     EMPTY_SHEET_STYLE_HEADERS_ONLY,
     EMPTY_SHEET_STYLE_PLACEHOLDER,
     EMPTY_STATION_TEXT,
@@ -54,6 +60,22 @@ def _placeholder_sheet(text: str) -> pd.DataFrame:
     return pd.DataFrame(columns=[text])
 
 
+def _apply_delivery_fee_override(df: pd.DataFrame, fixed_usd: float | None) -> pd.DataFrame:
+    """Reemplaza "Dry.Fee" por un monto fijo en USD (fixed_usd x Tpo.Cambio).
+
+    fixed_usd es el valor confirmado para la estacion de esta hoja (ver
+    AVIANCA_DELIVERY_FEE_USD_POR_ESTACION en config.py). Si es None, no hay
+    ajuste confirmado para esa estacion todavia: se deja "Dry.Fee" tal cual
+    viene del original, sin tocarlo.
+    """
+    if fixed_usd is None or df.empty or COL_DRY_FEE not in df.columns:
+        return df
+    df = df.copy()
+    tpo_cambio = pd.to_numeric(df[COL_TPO_CAMBIO], errors="coerce")
+    df[COL_DRY_FEE] = (fixed_usd * tpo_cambio).round().astype("int64")
+    return df
+
+
 def _empty_sheet(empty_sheet_style: str, report_columns: list[str], placeholder_text: str) -> pd.DataFrame:
     """Arma la hoja para un tipo de cargo/estacion sin ninguna fila.
 
@@ -84,11 +106,20 @@ def build_airline_report(df: pd.DataFrame, airline_key: str) -> dict[str, pd.Dat
     sheets: dict[str, pd.DataFrame] = {}
     for charge_type_key in airline_cfg["charge_types"]:
         charge_cfg = CHARGE_TYPES[charge_type_key]
-        sheets.update(_build_charge_type_sheets(airline_df, charge_cfg, empty_sheet_style))
+        delivery_fee_usd_by_station = None
+        if airline_key == "avianca" and charge_type_key == "delivery_fee":
+            delivery_fee_usd_by_station = AVIANCA_DELIVERY_FEE_USD_POR_ESTACION
+        charge_sheets = _build_charge_type_sheets(airline_df, charge_cfg, empty_sheet_style, delivery_fee_usd_by_station)
+        sheets.update(charge_sheets)
     return sheets
 
 
-def _build_charge_type_sheets(airline_df: pd.DataFrame, charge_cfg: dict, empty_sheet_style: str) -> dict[str, pd.DataFrame]:
+def _build_charge_type_sheets(
+    airline_df: pd.DataFrame,
+    charge_cfg: dict,
+    empty_sheet_style: str,
+    delivery_fee_usd_by_station: dict | None = None,
+) -> dict[str, pd.DataFrame]:
     amount_columns = charge_cfg["amount_columns"]
     report_columns = charge_cfg["report_columns"]
 
@@ -99,6 +130,8 @@ def _build_charge_type_sheets(airline_df: pd.DataFrame, charge_cfg: dict, empty_
             mask = _nonzero_mask(station_df, amount_columns)
             filtered = station_df.loc[mask, report_columns].reset_index(drop=True)
             filtered = _fix_codigo_column(filtered)
+            if delivery_fee_usd_by_station is not None:
+                filtered = _apply_delivery_fee_override(filtered, delivery_fee_usd_by_station.get(station))
 
             sheet_name = f"{charge_cfg['sheet_prefix']} {station}"
             if filtered.empty:
