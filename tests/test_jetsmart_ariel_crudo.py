@@ -36,8 +36,11 @@ from src.config import (
 )
 from src.jetsmart_cruce import (
     _AR_COLUMNS,
+    EXC_DIFERENCIA,
     EXC_DOBLE,
     EXC_DUPLICADA,
+    EXC_PENDIENTE,
+    EXC_REVISION,
     INC_PENDIENTE_ANTERIOR,
     cruzar_jetsmart,
     has_ariel_raw_file,
@@ -51,6 +54,10 @@ TRABAJO_JUN, TRABAJO_JUL = FIX / "LIQUIDACION_06-2026.xlsx", FIX / "LIQUIDACION_
 # Rendiciones reales que mando Ariel (crudas, sin tocar).
 RENDICION_AGO = FIX / "Ariel_Rendicion_agosto_2026.xlsx"
 RENDICION_SEP = FIX / "Ariel_Rendicion_septiembre_2026.xlsx"
+# Archivos de trabajo de Anita: agosto con BD + ARIEL armada a mano;
+# septiembre solo con BD (sin ARIEL: se usa la rendicion cruda).
+TRABAJO_AGO = FIX / "PRUEBA_LIQUIDACION_08-2026.xlsx"
+TRABAJO_SEP = FIX / "PRUEBA_LIQUIDACION_09-2026.xlsx"
 
 FILAS_CHICAS = [
     [827, 50200474, 94542, datetime(2026, 7, 1), 3039, "AMDM S.R.L", "JULIO BURGOA", "AEP", "BRC", 1, 8, 8, 736, 10000, "ART. CONSUMO"],
@@ -305,6 +312,88 @@ class TestRendicionesReales(unittest.TestCase):
         self.assertEqual(dobles, {98172, 98177, 98182, 98188})
         self.assertFalse(dobles & set(r.incluidas["# Guía"]))
         self.assertFalse((exc["Tipo"] == EXC_DUPLICADA).any())
+
+
+
+def _excepciones_de(resultado, tipo) -> set[int]:
+    exc = resultado.excepciones
+    return set(exc.loc[exc["Tipo"] == tipo, "Nro guía"])
+
+
+@unittest.skipUnless(
+    all(p.exists() for p in (TRABAJO_JUL, TRABAJO_AGO, TRABAJO_SEP, RENDICION_AGO, RENDICION_SEP)),
+    "faltan los archivos de agosto/septiembre en tests/fixtures/jetsmart/",
+)
+class TestCruceCompletoAgostoSeptiembre(unittest.TestCase):
+    """Cruce completo real: export del mes + rendicion cruda de Ariel, con
+    el mes anterior. Agosto contra julio; septiembre contra agosto."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.export_jul = load_jetsmart_export(TRABAJO_JUL)
+        cls.ariel_jul, _ = load_ariel(TRABAJO_JUL)
+        cls.export_ago = load_jetsmart_export(TRABAJO_AGO)
+        cls.export_sep = load_jetsmart_export(TRABAJO_SEP)
+        cls.ariel_ago_crudo, _ = load_ariel_raw(RENDICION_AGO)
+        cls.ariel_ago_hoja, _ = load_ariel(TRABAJO_AGO)
+        cls.ariel_sep_crudo, _ = load_ariel_raw(RENDICION_SEP)
+        cls.periodo_ago, _ = detect_jetsmart_period(cls.export_ago)
+        cls.periodo_sep, _ = detect_jetsmart_period(cls.export_sep)
+        # agosto como al cierre real (sin el export de septiembre) y con el
+        cls.ago = cruzar_jetsmart(cls.export_ago, cls.ariel_ago_crudo, cls.periodo_ago, cls.export_jul, cls.ariel_jul)
+        cls.ago_con_sig = cruzar_jetsmart(
+            cls.export_ago, cls.ariel_ago_crudo, cls.periodo_ago, cls.export_jul, cls.ariel_jul, cls.export_sep,
+        )
+        cls.sep = cruzar_jetsmart(cls.export_sep, cls.ariel_sep_crudo, cls.periodo_sep, cls.export_ago, cls.ariel_ago_hoja)
+
+    def test_periodos(self):
+        self.assertEqual((self.periodo_ago, self.periodo_sep), (("AGO", "26"), ("SEP", "26")))
+        self.assertFalse(has_ariel_sheet(TRABAJO_SEP))  # el caso que cubre load_ariel_raw
+
+    def test_agosto_crudo_igual_a_hoja_ariel_armada_a_mano(self):
+        # La prueba mas fuerte: el parseo automatico de la rendicion da
+        # exactamente el mismo cruce que la transcripcion manual de Anita.
+        con_hoja = cruzar_jetsmart(self.export_ago, self.ariel_ago_hoja, self.periodo_ago, self.export_jul, self.ariel_jul)
+        self.assertEqual(self.ago.resumen, con_hoja.resumen)
+        pd.testing.assert_frame_equal(self.ago.excepciones, con_hoja.excepciones)
+        pd.testing.assert_frame_equal(self.ago.incluidas, con_hoja.incluidas)
+        pd.testing.assert_frame_equal(self.ago.incluidas_ultimo_dia, con_hoja.incluidas_ultimo_dia)
+
+    def test_agosto(self):
+        r = self.ago
+        self.assertEqual(len(r.incluidas), 1552)
+        self.assertEqual(r.resumen["ya_declaradas_mes_anterior"], 21)
+        self.assertEqual(r.resumen["motivos_inclusion"][INC_PENDIENTE_ANTERIOR], 1)  # 96640, de julio
+        self.assertIn(96640, set(r.incluidas["# Guía"]))
+        self.assertEqual(_excepciones_de(r, EXC_DUPLICADA), {97479})  # fila repetida en la rendicion
+        self.assertEqual(_excepciones_de(r, EXC_DIFERENCIA), {96889, 97947})  # centavos
+        # 6 del 05/08 que no aparecen en ningun export, y 98188 (fechada
+        # 01/09 dentro de la rendicion de agosto, sin export de septiembre)
+        self.assertEqual(_excepciones_de(r, EXC_REVISION), {96816, 96823, 96829, 96833, 96839, 96847, 98188})
+        self.assertEqual(len(r.excepciones), 10)
+
+    def test_agosto_con_export_de_septiembre_confirma_98188(self):
+        self.assertIn(98188, set(self.ago_con_sig.incluidas["# Guía"]))
+        self.assertEqual(
+            _excepciones_de(self.ago_con_sig, EXC_REVISION), {96816, 96823, 96829, 96833, 96839, 96847},
+        )
+
+    def test_septiembre(self):
+        r = self.sep
+        self.assertEqual(len(r.incluidas), 1974)
+        self.assertEqual(r.resumen["ya_declaradas_mes_anterior"], 34)
+        # Ariel volvio a declarar en septiembre 4 guias que ya habia
+        # declarado en agosto: estan en el export de septiembre, pero no
+        # entran (se liquidaron en agosto) y van a revision manual.
+        self.assertEqual(_excepciones_de(r, EXC_DOBLE), {98172, 98177, 98182, 98188})
+        self.assertEqual(_excepciones_de(r, EXC_DIFERENCIA), {98397, 99820})
+        self.assertEqual(_excepciones_de(r, EXC_PENDIENTE), {89921})  # guia de abril en el export
+        self.assertEqual(len(r.excepciones), 7)
+
+    def test_ninguna_guia_liquidada_en_los_dos_meses(self):
+        for nombre, ago in (("sin export sep", self.ago), ("con export sep", self.ago_con_sig)):
+            with self.subTest(agosto=nombre):
+                self.assertEqual(set(ago.incluidas["# Guía"]) & set(self.sep.incluidas["# Guía"]), set())
 
 
 if __name__ == "__main__":

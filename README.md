@@ -110,6 +110,10 @@ se liquida con los Kg, el ingreso y el origen de Ariel.
 - **En los dos archivos con los mismos valores**: entra.
 - **En los dos, con diferencia de Kg o ingreso** (sin tolerancia): entra con
   los valores de Ariel y se marca como excepción.
+- **Declarada dos veces** (la guía ya estaba en el Ariel del mes anterior):
+  queda afuera y va a revisión manual, aunque esté en el export de este mes,
+  para no liquidarla dos veces. Pasó en septiembre 2026 con 98172, 98177,
+  98182 y 98188, que Ariel ya había declarado en agosto.
 - **Solo en el export**: si está en el Ariel del mes anterior, ya se liquidó
   ese mes y queda afuera sin excepción. Si no, es *pendiente de declarar*:
   queda afuera y se marca.

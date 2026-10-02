@@ -12,6 +12,11 @@ junio y julio 2026 en tests/test_jetsmart_cruce.py):
   ingreso y origen de Ariel.
 - Diferencias de Kg o ingreso entre ambos archivos: sin tolerancia (aunque
   sean centavos). La guia entra con los valores de Ariel y se marca.
+- Declarada dos veces: si una guia del Ariel de este mes ya estaba en el
+  Ariel del mes anterior, queda afuera y va a revision manual, este o no en
+  el export de este mes (ya se liquido el mes anterior: entrar de nuevo
+  seria facturarla dos veces). Caso real: 98172/98177/98182, del 31/08,
+  que Ariel declaro en agosto y otra vez en septiembre.
 - Guia solo en el export:
     * si esta en el Ariel del mes anterior -> ya se declaro y liquido ese
       mes: queda afuera, sin excepcion (es el corte de mes normal).
@@ -310,7 +315,9 @@ def cruzar_jetsmart(
             a = a.copy()
             a[COL_AR_GUIA] = g
 
-        if e is not None and a is not None:
+        if e is not None and a is not None and g in prev_ariel:
+            excepcion(EXC_DOBLE, g, a, e, detalle="Ya se declaró el mes anterior: no se incluye para no liquidarla dos veces.")
+        elif e is not None and a is not None:
             same_kg = _num(e[COL_JS_KGS]) == _num(a[COL_AR_KG])
             same_ing = _num(e[COL_JS_PRIORIDAD]) == _num(a[COL_AR_INGRESO])
             if same_kg and same_ing:
