@@ -66,7 +66,7 @@ from src.liquidacion_builder import (
     detect_unconfirmed_station_activity,
     write_liquidacion,
 )
-from src.jetsmart_cruce import cruzar_jetsmart, has_ariel_sheet, load_ariel
+from src.jetsmart_cruce import EXC_DIFERENCIA, cruzar_jetsmart, has_ariel_sheet, load_ariel
 from src.jetsmart_builder import (
     build_jetsmart_guias,
     build_jetsmart_resumen,
@@ -456,6 +456,9 @@ div[data-baseweb="select"] > div {{ border-radius: 8px !important; }}
 
 .hwc-chart-title {{ font-weight: 700; color: var(--hwc-blue-text); font-size: 0.95rem; margin-bottom: 0.4rem; }}
 .hwc-chart-sub {{ font-weight: 500; color: var(--hwc-text-muted); font-size: 0.82rem; margin-left: 0.35rem; }}
+.hwc-exc-legend {{ margin: 0.45rem 0 0.2rem 0; padding-left: 1.1rem; color: var(--hwc-text-muted); font-size: 0.82rem; }}
+.hwc-exc-legend li {{ margin: 0.15rem 0; }}
+.hwc-exc-legend b {{ color: var(--hwc-text); font-weight: 600; }}
 .hwc-detail-help {{ color: var(--hwc-text-muted); font-size: 0.85rem; margin: -0.15rem 0 0.6rem 0; }}
 .st-key-card_detalle[data-testid="stVerticalBlock"] {{
     background: #FAFBFD; border: 1px solid var(--hwc-border); border-radius: 14px;
@@ -961,15 +964,46 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
     else:
         st.markdown('<div class="hwc-group-title">Excepciones del cruce</div>', unsafe_allow_html=True)
         # Vacio en vez de "None": numeros como numero, texto en blanco.
+        # Solo presentacion (el Excel lleva la columna "Detalle" completa): el
+        # texto largo de "Detalle" es el mismo para todas las filas de un tipo
+        # y hacia que la tabla desbordara el ancho de la pagina. En la tabla
+        # queda solo lo que varia por fila ("Qué difiere", en las
+        # diferencias); la explicacion de cada tipo va una vez, abajo.
         vista = excepciones.copy()
         for col in ["Kg export", "Kg Ariel", "Ingreso export", "Ingreso Ariel"]:
             vista[col] = pd.to_numeric(vista[col], errors="coerce")
-        for col in ["Fecha Ariel", "Detalle"]:
-            vista[col] = vista[col].fillna("")
+        vista["Fecha Ariel"] = vista["Fecha Ariel"].fillna("")
+        es_dif = vista["Tipo"] == EXC_DIFERENCIA
+        vista["Qué difiere"] = ""
+        vista.loc[es_dif, "Qué difiere"] = (
+            vista.loc[es_dif, "Detalle"].fillna("").str.replace("Difiere ", "", regex=False).str.rstrip(".")
+        )
+        explicaciones = [
+            (t, d) for t, d in
+            vista.loc[~es_dif & vista["Detalle"].notna(), ["Tipo", "Detalle"]].drop_duplicates("Tipo").itertuples(index=False)
+        ]
+        if es_dif.any():
+            explicaciones.insert(0, (EXC_DIFERENCIA, "entra a la liquidación con los valores de Ariel."))
+        # "Sí, con valores de Ariel" -> "Sí": la aclaracion va en la leyenda.
+        vista["¿Entra a la liquidación?"] = vista["¿Entra a la liquidación?"].str.split(",").str[0]
+        vista = vista.drop(columns=["Detalle"]).rename(columns={"¿Entra a la liquidación?": "¿Entra?"})
         st.dataframe(vista, use_container_width=True, hide_index=True, key=f"{key}_excepciones", column_config={
-            c: st.column_config.NumberColumn(format="localized")
-            for c in ("Kg export", "Kg Ariel", "Ingreso export", "Ingreso Ariel")
+            # Solo el nro de guia fijo (angosto): al scrollear en mobile no se
+            # pierde de que guia es cada fila. "Tipo" fijo tapaba todo.
+            "Nro guía": st.column_config.NumberColumn(format="plain", pinned=True),
+            "¿Entra?": st.column_config.TextColumn(help="¿Entra a la liquidación de este mes?"),
+            **{
+                c: st.column_config.NumberColumn(format="localized")
+                for c in ("Kg export", "Kg Ariel", "Ingreso export", "Ingreso Ariel")
+            },
         })
+        if explicaciones:
+            st.markdown(
+                '<ul class="hwc-exc-legend">'
+                + "".join(f"<li><b>{t}:</b> {d}</li>" for t, d in explicaciones)
+                + "</ul>",
+                unsafe_allow_html=True,
+            )
 
 
 def _render_jetsmart_result(
