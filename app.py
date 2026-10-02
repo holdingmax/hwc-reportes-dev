@@ -141,6 +141,7 @@ st.markdown(
     --hwc-text-muted: #64748B;
     --hwc-border: #DCE7EE;
     --hwc-success: #1E8E5A;
+    --hwc-warning: #C27C0E;
 }}
 
 html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-testid="stMain"] {{
@@ -374,6 +375,29 @@ div[data-baseweb="select"] > div {{ border-radius: 8px !important; }}
 .hwc-dot-active {{ background: var(--hwc-success); color: #fff; }}
 .hwc-dot-success {{ background: var(--hwc-success); color: #fff; }}
 .hwc-dot-pending {{ background: #fff; border: 1.5px solid #B8C4CF; }}
+/* Estado "revisar": ambar, reservado para excepciones/avisos (siempre con "!"). */
+.hwc-dot-warn {{ background: var(--hwc-warning); color: #fff; }}
+
+/* --- Renglones de las cards de resumen (ver _resumen_card) --- */
+.hwc-line {{
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    font-size: 0.87rem; color: var(--hwc-text); padding: 0.36rem 0;
+    border-bottom: 1px solid #EEF3F7;
+}}
+.hwc-line:last-child {{ border-bottom: none; }}
+.hwc-line-label {{ display: flex; align-items: center; gap: 0.55rem; }}
+.hwc-line-value {{ font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--hwc-text); }}
+.hwc-line-subtotal {{ font-weight: 700; }}
+.hwc-line-subtotal .hwc-line-value {{ font-weight: 700; }}
+.hwc-line-total {{ border-top: 1.5px solid var(--hwc-blue-text); border-bottom: none; margin-top: 0.3rem; padding-top: 0.6rem; font-weight: 800; color: var(--hwc-blue-text); }}
+.hwc-line-total .hwc-line-value {{ font-weight: 800; color: var(--hwc-blue-text); background: #EAF1F6; padding: 0.2rem 0.7rem; border-radius: 100px; }}
+.hwc-line-vacio {{ color: var(--hwc-text-muted); }}
+.hwc-line-warn .hwc-line-value {{ color: #8A5A12; background: #FBF0DC; padding: 0.1rem 0.6rem; border-radius: 100px; }}
+.hwc-line-group {{
+    font-size: 0.74rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--hwc-text-muted); padding: 0.7rem 0 0.2rem 0;
+}}
+.hwc-line-group:first-child {{ padding-top: 0; }}
 .hwc-dot-empty {{ background: #E4E9F0; color: #9AA5B1; }}
 .hwc-row-active {{ color: var(--hwc-text); }}
 .hwc-row-empty {{ color: var(--hwc-text-muted); }}
@@ -382,7 +406,9 @@ div[data-baseweb="select"] > div {{ border-radius: 8px !important; }}
     background: #EAF1F6; padding: 0.15rem 0.65rem; border-radius: 100px; font-size: 0.78rem;
 }}
 
-/* --- Pantalla de acceso --- */
+/* --- Pantalla de acceso: card angosta y centrada (con layout="wide",
+   sin esto se estiraria a todo el ancho de la pagina) --- */
+.st-key-card_login[data-testid="stVerticalBlock"] {{ max-width: 440px; width: 100%; margin: 9vh auto 0 auto; }}
 .hwc-login-wrap {{ display: flex; flex-direction: column; align-items: center; text-align: center; }}
 .hwc-login-logo {{ height: 4.5rem; width: auto; margin-bottom: 1.1rem; }}
 .hwc-login-title {{ font-size: 1.3rem; font-weight: 700; color: var(--hwc-blue-text); margin-bottom: 0.3rem; }}
@@ -500,7 +526,7 @@ def _check_password() -> bool:
                 st.session_state["hwc_authenticated"] = True
                 st.rerun()
             else:
-                st.error("Contraseña incorrecta.", icon="🚫")
+                st.error("Contraseña incorrecta.", icon=":material/lock:")
     return False
 
 
@@ -731,6 +757,34 @@ def _render_exito(airline_key: str, period: tuple[str, str], buffer) -> None:
     )
 
 
+def _resumen_card(titulo: str, filas: list[tuple]) -> str:
+    """Card de resumen con un unico criterio visual en toda la app.
+
+    filas: (tipo, etiqueta, valor). Tipos:
+    - "item": renglon de un estado contable (etiqueta a la izquierda, monto
+      a la derecha, sin icono: no es un estado, es un dato).
+    - "grupo": encabezado de un sub-bloque (ej. "LATAM AIRLINES").
+    - "subtotal" / "total": en negrita; "total" con separador arriba.
+    - "ok" / "warn" / "vacio": estados, con punto de color + simbolo (nunca
+      color solo): verde = salio bien, ambar = hay que revisar, gris = sin
+      movimiento. El verde no se usa para datos neutros.
+    """
+    html = ""
+    for tipo, etiqueta, valor in filas:
+        valor_html = f'<span class="hwc-line-value">{valor}</span>' if valor is not None else ""
+        if tipo == "grupo":
+            html += f'<div class="hwc-line-group">{etiqueta}</div>'
+        elif tipo in ("ok", "warn", "vacio"):
+            dot = {"ok": ("hwc-dot-success", "✓"), "warn": ("hwc-dot-warn", "!"), "vacio": ("hwc-dot-empty", "–")}[tipo]
+            html += (
+                f'<div class="hwc-line hwc-line-{tipo}"><span class="hwc-line-label">'
+                f'<span class="hwc-dot {dot[0]}">{dot[1]}</span>{etiqueta}</span>{valor_html}</div>'
+            )
+        else:
+            html += f'<div class="hwc-line hwc-line-{tipo}"><span class="hwc-line-label">{etiqueta}</span>{valor_html}</div>'
+    return f'<div class="hwc-group-card"><div class="hwc-group-title">{titulo}</div>{html}</div>'
+
+
 def _render_liquidacion_result(uploaded_file) -> tuple[object, dict, tuple[str, str]]:
     """Corre el flujo de liquidacion de LATAM y muestra su propio resumen.
 
@@ -766,7 +820,7 @@ def _render_liquidacion_result(uploaded_file) -> tuple[object, dict, tuple[str, 
         st.warning(
             f"Se excluyeron {len(excluded)} {fila_word} fuera del período detectado "
             f"({period_label(period)}) de LATAM: {detalle_txt}.",
-            icon="⚠️",
+            icon=":material/warning:",
         )
 
     unconfirmed_stations = AIRLINE_CONFIGS["latam"].get("unconfirmed_stations", [])
@@ -778,67 +832,49 @@ def _render_liquidacion_result(uploaded_file) -> tuple[object, dict, tuple[str, 
                 f"Se detectaron movimientos de LATAM sin incluir en esta liquidación "
                 f"(estación no validada todavía): {detalle_txt}. Ese monto queda fuera de "
                 f"TOTAL PERIODO — no se está facturando.",
-                icon="⚠️",
+                icon=":material/warning:",
             )
 
+    st.markdown(_latam_resumen_html(resumen), unsafe_allow_html=True)
     st.markdown(
-        f'<div class="hwc-group-card">'
-        f'<div class="hwc-group-title">📑 Detalle de Facturación</div>'
-        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
-        f'Guías con cargo (EZE)<span class="hwc-count">{len(detalle)} filas</span></div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        f'<div class="hwc-group-card">'
-        f'<div class="hwc-group-title">🧾 Resumen Facturación</div>'
-        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
-        f'TOTAL LA (sin IVA)<span class="hwc-count">{_money(resumen["total_la"])}</span></div>'
-        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
-        f'TOTAL 4M (con IVA)<span class="hwc-count">{_money(resumen["total_4m"])}</span></div>'
-        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
-        f'TOTAL PERIODO<span class="hwc-count">{_money(resumen["total_periodo"])}</span></div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        f'<div class="hwc-group-card">'
-        f'<div class="hwc-group-title">📝 Compensación</div>'
-        f'<div class="hwc-row hwc-row-empty"><span class="hwc-dot hwc-dot-empty">–</span>'
-        f'pendiente de carga manual para este período</div>'
-        f'</div>',
+        _resumen_card("Detalle y compensación", [
+            ("ok", "Detalle de Facturación: guías con cargo (EZE)", f"{_num(len(detalle), 0)} filas"),
+            ("vacio", "Compensación: pendiente de carga manual para este período", None),
+        ]),
         unsafe_allow_html=True,
     )
 
     return buffer, resumen, period
 
+def _latam_resumen_html(resumen: dict) -> str:
+    """Resumen Facturacion de LATAM, con el mismo desglose que la hoja real
+    del Excel (build_latam_resumen, no una reimplementacion del IVA)."""
+    filas = [("grupo", "LATAM AIRLINES", None)]
+    filas += [("item", col, _money(resumen["sums"][col])) for col in LATAM_SUBFACTURA_LA]
+    filas += [("subtotal", "TOTAL LA (sin IVA)", _money(resumen["total_la"])), ("grupo", "LAN ARGENTINA", None)]
+    filas += [("item", col, _money(resumen["sums"][col])) for col in LATAM_SUBFACTURA_4M]
+    filas += [
+        ("item", "IVA (21%, informativo)", _money(resumen["iva"])),
+        ("subtotal", "TOTAL 4M (con IVA)", _money(resumen["total_4m"])),
+        ("total", "TOTAL PERÍODO", _money(resumen["total_periodo"])),
+    ]
+    return _resumen_card("Resumen Facturación", filas)
+
+
 def _jetsmart_resumen_html(resumen: dict) -> str:
     """Card con la hoja LIQUIDACION (y el total de CVLP) de JetSmart."""
-    def row(label, value, *, bold=False, dot="✓", style=""):
-        label_html = f"<b>{label}</b>" if bold else label
-        return (
-            f'<div class="hwc-row hwc-row-active"{style}><span class="hwc-dot hwc-dot-active">{dot}</span>'
-            f'{label_html}<span class="hwc-count">{_money(value)}</span></div>'
-        )
-
-    separador = ' style="margin-top:0.5rem;border-top:1px solid var(--hwc-border);padding-top:0.6rem;"'
-    return (
-        '<div class="hwc-group-card">'
-        '<div class="hwc-group-title">🧾 Liquidación JetSmart</div>'
-        + row("Ventas totales", resumen["ventas_totales"])
-        + row("IVA", resumen["iva"], dot="%")
-        + row("Ventas Netas", resumen["ventas_netas"], bold=True, dot="Σ")
-        + row("Comisiones por ventas — domésticas (7,5%)", resumen["comision_domestica"])
-        + row("Comisiones por ventas — internacionales", resumen["comision_inter"])
-        + row(f"GHA Services ({_num(resumen['kg_total'])} kg)", resumen["gha_services"])
-        + row("IVA de servicios y comisiones", resumen["iva_servicios"])
-        + row("IIBB", resumen["iibb"])
-        + row("Total a entregar a WCS", resumen["total_wcs"], bold=True, style=separador)
-        + row("CVLP — Total final (con IVA 21% s/ neto gravado)", resumen["cvlp"]["total_final"])
-        + "</div>"
-    )
+    return _resumen_card("Liquidación JetSmart", [
+        ("item", "Ventas totales", _money(resumen["ventas_totales"])),
+        ("item", "IVA", _money(resumen["iva"])),
+        ("subtotal", "Ventas Netas", _money(resumen["ventas_netas"])),
+        ("item", "Comisiones por ventas — domésticas (7,5%)", _money(resumen["comision_domestica"])),
+        ("item", "Comisiones por ventas — internacionales", _money(resumen["comision_inter"])),
+        ("item", f"GHA Services ({_num(resumen['kg_total'])} kg)", _money(resumen["gha_services"])),
+        ("item", "IVA de servicios y comisiones", _money(resumen["iva_servicios"])),
+        ("item", "IIBB", _money(resumen["iibb"])),
+        ("total", "Total a entregar a WCS", _money(resumen["total_wcs"])),
+        ("item", "CVLP — Total final (con IVA 21% s/ neto gravado)", _money(resumen["cvlp"]["total_final"])),
+    ])
 
 
 def _jetsmart_avisos(resumen: dict) -> None:
@@ -858,7 +894,7 @@ def _jetsmart_avisos(resumen: dict) -> None:
         st.warning(
             f"Tarifa no confirmada: la tarifa GHA de JetSmart todavía no está confirmada con el cliente "
             f"(se aplicó {detalle_txt}). Revisá GHA Services antes de usar estos montos.",
-            icon="⚠️",
+            icon=":material/warning:",
         )
 
 
@@ -880,19 +916,14 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
     ultimo_dia = cruce["incluidas_ultimo_dia"]
     motivos = r["motivos_inclusion"]
 
-    filas = [
-        ("Guías que entran a la liquidación", f'{r["incluidas"]}'),
-        ("Matchean limpio (export = Ariel)", f'{motivos.get("match", 0)}'),
-        ("Ya declaradas el mes anterior (quedan afuera)", f'{r["ya_declaradas_mes_anterior"]}'),
-        ("Excepciones para revisar", f'{r["excepciones"]}'),
-    ]
-    rows_html = "".join(
-        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
-        f'{label}<span class="hwc-count">{valor}</span></div>'
-        for label, valor in filas
-    )
+    n_exc = r["excepciones"]
     st.markdown(
-        f'<div class="hwc-group-card"><div class="hwc-group-title">🔀 Cruce con Ariel</div>{rows_html}</div>',
+        _resumen_card("Cruce con Ariel", [
+            ("subtotal", "Guías que entran a la liquidación", _num(r["incluidas"], 0)),
+            ("ok", "Matchean limpio (export = Ariel)", _num(motivos.get("match", 0), 0)),
+            ("item", "Ya declaradas el mes anterior (quedan afuera)", _num(r["ya_declaradas_mes_anterior"], 0)),
+            ("warn" if n_exc else "ok", "Excepciones para revisar" if n_exc else "Sin excepciones", _num(n_exc, 0)),
+        ]),
         unsafe_allow_html=True,
     )
 
@@ -901,16 +932,18 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
             f"Se incluyeron {len(ultimo_dia)} guías de Ariel del último día del mes ({r['ultimo_dia']}) "
             "por la regla de último día, sin confirmación cruzada: no están en el export de este mes y "
             "todavía no se cargó el export del mes siguiente para confirmarlas.",
-            icon="⚠️",
+            icon=":material/warning:",
         )
         with st.expander(f"Ver las {len(ultimo_dia)} guías incluidas por la regla de último día", key=f"{key}_ultimo_dia"):
-            st.dataframe(ultimo_dia, use_container_width=True, hide_index=True)
+            st.dataframe(ultimo_dia, use_container_width=True, hide_index=True, column_config={
+                c: st.column_config.NumberColumn(format="localized") for c in ("Kg Ariel", "Ingreso Ariel")
+            })
 
     if r["ingreso_fuera_por_revision"]:
         st.warning(
             f"Hay guías de Ariel a revisión manual que quedaron FUERA de la liquidación por "
             f"{_money(r['ingreso_fuera_por_revision'])} de ingreso. Revisalas en la tabla de excepciones.",
-            icon="⚠️",
+            icon=":material/warning:",
         )
 
     if excepciones.empty:
@@ -923,7 +956,10 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
             vista[col] = pd.to_numeric(vista[col], errors="coerce")
         for col in ["Fecha Ariel", "Detalle"]:
             vista[col] = vista[col].fillna("")
-        st.dataframe(vista, use_container_width=True, hide_index=True, key=f"{key}_excepciones")
+        st.dataframe(vista, use_container_width=True, hide_index=True, key=f"{key}_excepciones", column_config={
+            c: st.column_config.NumberColumn(format="localized")
+            for c in ("Kg export", "Kg Ariel", "Ingreso export", "Ingreso Ariel")
+        })
 
 
 def _render_jetsmart_result(
@@ -1153,7 +1189,7 @@ with st.container(key="zona_carga"):
                         st.warning(
                             f"Se excluyeron {len(excluded)} {fila_word} fuera del período detectado "
                             f"({period_label(period)}) del reporte de {airline_key.upper()}: {detalle_txt}.",
-                            icon="⚠️",
+                            icon=":material/warning:",
                         )
 
                     unconfirmed_stations = airline_cfg.get("unconfirmed_stations", [])
@@ -1165,32 +1201,18 @@ with st.container(key="zona_carga"):
                                 f"Se detectaron movimientos en {estaciones} para {airline_key.upper()}. "
                                 f"La tarifa aplicada ahí todavía no está confirmada con el cliente — "
                                 f"revisá los montos manualmente antes de usarlos.",
-                                icon="⚠️",
+                                icon=":material/warning:",
                             )
 
                     for charge_type_key in airline_cfg["charge_types"]:
-                        icon, label = CHARGE_TYPE_LABELS.get(charge_type_key, ("📁", charge_type_key))
+                        _, label = CHARGE_TYPE_LABELS.get(charge_type_key, ("", charge_type_key))
                         group_sheets = _sheets_for_charge_type(sheets, charge_type_key)
-
-                        rows_html = ""
-                        for sheet_name, sheet_df in group_sheets.items():
-                            n_rows = len(sheet_df)
-                            if n_rows == 0:
-                                rows_html += (
-                                    f'<div class="hwc-row hwc-row-empty">'
-                                    f'<span class="hwc-dot hwc-dot-empty">–</span>{sheet_name} · sin movimiento</div>'
-                                )
-                            else:
-                                rows_html += (
-                                    f'<div class="hwc-row hwc-row-active">'
-                                    f'<span class="hwc-dot hwc-dot-active">✓</span>{sheet_name}'
-                                    f'<span class="hwc-count">{n_rows} filas</span></div>'
-                                )
-
                         st.markdown(
-                            f'<div class="hwc-group-card">'
-                            f'<div class="hwc-group-title">{icon} {label}</div>'
-                            f'{rows_html}</div>',
+                            _resumen_card(label, [
+                                ("vacio", f"{sheet_name} · sin movimiento", None) if len(sheet_df) == 0
+                                else ("ok", sheet_name, f"{_num(len(sheet_df), 0)} filas")
+                                for sheet_name, sheet_df in group_sheets.items()
+                            ]),
                             unsafe_allow_html=True,
                         )
             except Exception as exc:  # el detalle tecnico va aparte, chico
@@ -1411,14 +1433,14 @@ with st.container(key="zona_historial"):
                     fila_sel = vista_df.iloc[seleccion]
 
                     if fila_sel["cantidad_filas"] == 0:
-                        st.info("Esta liquidación no tiene movimientos asociados (sin movimiento).", icon="🔍")
+                        st.info("Esta liquidación no tiene movimientos asociados (sin movimiento).", icon=":material/info:")
                     else:
                         with st.spinner("Cargando detalle..."):
                             resultado_detalle = _obtener_detalle_liquidacion(fila_sel)
                         if resultado_detalle is None:
                             st.warning(
                                 "No se pudo cargar el detalle ahora mismo. Probá de nuevo en unos minutos.",
-                                icon="⚠️",
+                                icon=":material/warning:",
                             )
                         else:
                             detalle_df, resumen, sheet_name = resultado_detalle
@@ -1443,35 +1465,7 @@ with st.container(key="zona_historial"):
                                 # (ver _write_resumen_sheet en
                                 # liquidacion_builder.py), no una
                                 # reimplementacion del calculo de IVA.
-                                la_rows = "".join(
-                                    f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
-                                    f'{col}<span class="hwc-count">{_money(resumen["sums"][col])}</span></div>'
-                                    for col in LATAM_SUBFACTURA_LA
-                                )
-                                m4_rows = "".join(
-                                    f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
-                                    f'{col}<span class="hwc-count">{_money(resumen["sums"][col])}</span></div>'
-                                    for col in LATAM_SUBFACTURA_4M
-                                )
-                                st.markdown(
-                                    f'<div class="hwc-group-card">'
-                                    f'<div class="hwc-group-title">🧾 Resumen Facturación</div>'
-                                    f'<div class="hwc-row" style="font-weight:700;color:var(--hwc-blue-text);">LATAM AIRLINES</div>'
-                                    f'{la_rows}'
-                                    f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">Σ</span>'
-                                    f'<b>TOTAL LA (sin IVA)</b><span class="hwc-count">{_money(resumen["total_la"])}</span></div>'
-                                    f'<div class="hwc-row" style="font-weight:700;color:var(--hwc-blue-text);margin-top:0.6rem;">LAN ARGENTINA</div>'
-                                    f'{m4_rows}'
-                                    f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">%</span>'
-                                    f'IVA (21%, informativo)<span class="hwc-count">{_money(resumen["iva"])}</span></div>'
-                                    f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">Σ</span>'
-                                    f'<b>TOTAL 4M (con IVA)</b><span class="hwc-count">{_money(resumen["total_4m"])}</span></div>'
-                                    f'<div class="hwc-row hwc-row-active" style="margin-top:0.5rem;border-top:1px solid var(--hwc-border);padding-top:0.6rem;">'
-                                    f'<span class="hwc-dot hwc-dot-active">✓</span><b>TOTAL PERIODO</b>'
-                                    f'<span class="hwc-count">{_money(resumen["total_periodo"])}</span></div>'
-                                    f'</div>',
-                                    unsafe_allow_html=True,
-                                )
+                                st.markdown(_latam_resumen_html(resumen), unsafe_allow_html=True)
                                 st.caption(
                                     f"{len(detalle_df)} filas de detalle (hoja \"Detalle de Facturación\") — "
                                     "mismo filtrado y mismo cálculo de IVA que el Excel real de esta liquidación "
