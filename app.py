@@ -202,6 +202,10 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-tes
     margin-right: auto;
 }}
 .st-key-zona_historial {{ width: 100%; }}
+/* Dentro de la zona de carga las cards ya quedan separadas por el gap
+   propio de Streamlit: sin margen extra, para que los pasos se lean como
+   un solo flujo y no como bloques sueltos. */
+.st-key-zona_carga [data-testid="stVerticalBlock"][class*="st-key-card_"] {{ margin-bottom: 0; }}
 
 h1, h2, h3 {{ font-family: 'Inter', sans-serif; font-weight: 800; color: var(--hwc-blue-text); letter-spacing: -0.01em; }}
 /* Nota: no pisar el color de todos los <p> de stMarkdownContainer aca:
@@ -211,21 +215,13 @@ h1, h2, h3 {{ font-family: 'Inter', sans-serif; font-weight: 800; color: var(--h
 [data-testid="stCaptionContainer"] {{ color: var(--hwc-text-muted) !important; }}
 [data-testid="stWidgetLabel"] p {{ font-weight: 600; color: var(--hwc-text); font-size: 0.85rem; }}
 
-/* --- Titulo principal, con el logo al lado del nombre --- */
-.hwc-page-title {{
-    display: flex; align-items: center; gap: 0.85rem;
-    font-size: 2.4rem; font-weight: 800; color: var(--hwc-blue-text);
-    letter-spacing: -0.02em; line-height: 1.1;
-    margin: 0 0 1.2rem 0;
-}}
-.hwc-page-title-logo {{ height: 3rem; width: auto; flex-shrink: 0; }}
-
-/* --- Banner superior de marca --- */
+/* --- Encabezado: un unico banner de marca, compacto (logo sobre chip
+   blanco -- el logo es azul y no contrasta sobre el degrade oscuro). --- */
 .hwc-hero {{
     background: linear-gradient(135deg, var(--hwc-blue-deep) 0%, var(--hwc-blue) 100%);
     border-radius: 16px;
-    padding: 1.8rem 2.1rem;
-    margin-bottom: 1.6rem;
+    padding: 1.15rem 1.6rem;
+    margin-bottom: 0.4rem;
     box-shadow: 0 10px 30px -14px rgba(17, 46, 65, 0.55);
     position: relative;
     overflow: hidden;
@@ -240,17 +236,20 @@ h1, h2, h3 {{ font-family: 'Inter', sans-serif; font-weight: 800; color: var(--h
     background: rgba(255, 255, 255, 0.09);
     border-radius: 50%;
 }}
-.hwc-hero-sub {{ color: rgba(255, 255, 255, 0.82) !important; font-size: 0.85rem; margin: 0; position: relative; }}
-.hwc-hero-tag {{
-    display: inline-block; margin-top: 0.9rem;
-    background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.35);
-    color: #fff; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
-    text-transform: uppercase; padding: 0.28rem 0.75rem; border-radius: 100px; position: relative;
+.hwc-hero-brand {{ display: flex; align-items: center; gap: 1rem; position: relative; }}
+.hwc-hero-logo {{
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 52px; height: 52px; border-radius: 12px; background: #fff;
+    box-shadow: 0 4px 12px -6px rgba(17, 46, 65, 0.6);
 }}
+.hwc-hero-logo img {{ width: 38px; height: auto; }}
+.hwc-hero-title {{ color: #fff; font-size: 1.45rem; font-weight: 800; letter-spacing: -0.01em; line-height: 1.15; }}
+.hwc-hero-sub {{ color: rgba(255, 255, 255, 0.82) !important; font-size: 0.85rem; margin: 0.15rem 0 0 0; }}
 
 /* --- Cards de seccion (subir archivo / aerolinea / resultado / login / historial) --- */
 .st-key-card_upload[data-testid="stVerticalBlock"],
 .st-key-card_config[data-testid="stVerticalBlock"],
+.st-key-card_datos[data-testid="stVerticalBlock"],
 .st-key-card_result[data-testid="stVerticalBlock"],
 .st-key-card_login[data-testid="stVerticalBlock"],
 .st-key-card_historial[data-testid="stVerticalBlock"] {{
@@ -269,13 +268,30 @@ h1, h2, h3 {{ font-family: 'Inter', sans-serif; font-weight: 800; color: var(--h
     border-left: 4px solid var(--hwc-blue); padding-left: 0.7rem;
     margin: 1.6rem 0 0.25rem 0;
 }}
-.hwc-section-sub {{ color: var(--hwc-text-muted); font-size: 0.85rem; margin: 0 0 1rem 0.95rem; }}
+.hwc-section-sub {{ color: var(--hwc-text-muted); font-size: 0.88rem; margin: 0 0 1rem 0.95rem; }}
 
 .hwc-step {{
-    display: flex; align-items: center; gap: 0.65rem;
+    display: flex; align-items: flex-start; gap: 0.75rem;
     font-weight: 700; font-size: 1.05rem; color: var(--hwc-blue-text);
-    margin-bottom: 1rem;
+    margin-bottom: 0.9rem;
 }}
+.hwc-step-title {{ line-height: 27px; }}
+.hwc-step-help {{ font-weight: 400; font-size: 0.85rem; color: var(--hwc-text-muted); line-height: 1.45; margin-top: 0.1rem; }}
+.hwc-step-help b {{ color: var(--hwc-text); font-weight: 600; }}
+.hwc-result-title {{ font-weight: 800; font-size: 1.1rem; color: var(--hwc-blue-text); margin-bottom: 0.4rem; }}
+
+/* --- Que falta para procesar (explica el boton deshabilitado) --- */
+.hwc-req {{ background: #F5F8FB; border: 1px solid var(--hwc-border); border-radius: 12px; padding: 0.85rem 1.1rem; margin-bottom: 0.8rem; }}
+.hwc-req-title {{ font-size: 0.82rem; font-weight: 700; color: var(--hwc-blue-text); margin-bottom: 0.35rem; }}
+.hwc-req ul {{ list-style: none; margin: 0; padding: 0; }}
+.hwc-req li {{ display: flex; align-items: center; gap: 0.55rem; font-size: 0.86rem; padding: 0.18rem 0; }}
+.hwc-req-ok {{ color: var(--hwc-text-muted); text-decoration: line-through; text-decoration-color: rgba(100, 116, 139, 0.45); }}
+.hwc-req-pending {{ color: var(--hwc-text); }}
+.hwc-ready {{ display: flex; align-items: center; gap: 0.55rem; font-size: 0.88rem; font-weight: 600; color: var(--hwc-success); margin-bottom: 0.8rem; }}
+
+/* --- Selector de aerolinea (segmented control): opciones parejas y grandes --- */
+.st-key-aerolinea_sel button {{ min-height: 2.6rem; font-weight: 600; }}
+.st-key-aerolinea_sel button p {{ font-size: 0.92rem; }}
 .hwc-step-num {{
     display: inline-flex; align-items: center; justify-content: center;
     width: 27px; height: 27px; border-radius: 50%; flex-shrink: 0;
@@ -356,6 +372,8 @@ div[data-baseweb="select"] > div {{ border-radius: 8px !important; }}
     font-weight: 800; flex-shrink: 0;
 }}
 .hwc-dot-active {{ background: var(--hwc-success); color: #fff; }}
+.hwc-dot-success {{ background: var(--hwc-success); color: #fff; }}
+.hwc-dot-pending {{ background: #fff; border: 1.5px solid #B8C4CF; }}
 .hwc-dot-empty {{ background: #E4E9F0; color: #9AA5B1; }}
 .hwc-row-active {{ color: var(--hwc-text); }}
 .hwc-row-empty {{ color: var(--hwc-text-muted); }}
@@ -392,11 +410,13 @@ div[data-baseweb="select"] > div {{ border-radius: 8px !important; }}
 /* --- Responsive: pantallas chicas --- */
 @media (max-width: 480px) {{
     [data-testid="stMainBlockContainer"] {{ padding-left: 1rem !important; padding-right: 1rem !important; }}
-    .hwc-page-title {{ font-size: 1.7rem; gap: 0.55rem; }}
-    .hwc-page-title-logo {{ height: 2.2rem; }}
-    .hwc-hero {{ padding: 1.4rem 1.3rem; }}
+    .hwc-hero {{ padding: 1rem 1.1rem; }}
+    .hwc-hero-logo {{ width: 44px; height: 44px; }}
+    .hwc-hero-logo img {{ width: 32px; }}
+    .hwc-hero-title {{ font-size: 1.25rem; }}
     .st-key-card_upload[data-testid="stVerticalBlock"],
     .st-key-card_config[data-testid="stVerticalBlock"],
+    .st-key-card_datos[data-testid="stVerticalBlock"],
     .st-key-card_result[data-testid="stVerticalBlock"],
     .st-key-card_login[data-testid="stVerticalBlock"],
     .st-key-card_historial[data-testid="stVerticalBlock"] {{ padding: 1.2rem 1.15rem; }}
@@ -569,6 +589,61 @@ def _obtener_detalle_liquidacion(fila) -> tuple[pd.DataFrame, dict | None, str |
     return detalle, None, sheet_name
 
 
+# Nombre de cada aerolinea tal como se muestra en pantalla (las claves de
+# AIRLINE_CONFIGS son internas, en minuscula).
+AIRLINE_NAMES = {"avianca": "Avianca", "gol": "Gol", "latam": "LATAM", "jetsmart": "JetSmart"}
+
+
+def _airline_name(airline_key: str) -> str:
+    return AIRLINE_NAMES.get(airline_key, airline_key.upper())
+
+
+# Que archivo hay que subir en el paso 2, segun la aerolinea elegida.
+def _archivo_hint(airline_key: str | None) -> str:
+    if airline_key is None:
+        return "Primero elegí la aerolínea: según cuál sea, cambia el archivo que hay que subir."
+    if AIRLINE_CONFIGS[airline_key].get("flow") == FLOW_JETSMART:
+        return (
+            "El <b>archivo de trabajo del mes</b> (LIQUIDACION ECS): la hoja BD con el export de guías "
+            "primero y la hoja ARIEL con el archivo de Ariel."
+        )
+    return "El <b>export del sistema</b> (archivo original.xlsx), tal como sale, sin editar."
+
+
+def _render_exito(airline_key: str, period: tuple[str, str], buffer) -> None:
+    """Cierre del procesamiento: un solo mensaje de exito y la descarga.
+
+    "Guardado en el historial" solo se afirma si la base responde: el
+    guardado (src/db.py) es fail-soft y no avisa si fallo, asi que se usa
+    obtener_filtros_historial() como chequeo de que la base esta
+    disponible, en vez de prometer algo que puede no haber pasado.
+    """
+    nombre = _airline_name(airline_key)
+    guardado = obtener_filtros_historial() is not None
+    if guardado:
+        st.success(
+            f"**Listo: {nombre} · {period_label(period)}.** Quedó guardada en el Historial de Liquidaciones.",
+            icon=":material/check_circle:",
+        )
+    else:
+        st.warning(
+            f"**{nombre} · {period_label(period)} generada, pero sin guardar en el historial** "
+            "(la base de datos no responde). Descargá el Excel para no perderla.",
+            icon=":material/cloud_off:",
+        )
+    st.download_button(
+        label="Descargar Excel",
+        icon=":material/download:",
+        data=buffer,
+        file_name=f"{airline_key}_{period_slug(period)}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+        # Sin rerun al descargar: el resultado sigue en pantalla.
+        on_click="ignore",
+        key="resultado_descarga",
+    )
+
+
 def _render_liquidacion_result(uploaded_file) -> tuple[object, dict, tuple[str, str]]:
     """Corre el flujo de liquidacion de LATAM y muestra su propio resumen.
 
@@ -594,8 +669,7 @@ def _render_liquidacion_result(uploaded_file) -> tuple[object, dict, tuple[str, 
             resumen=resumen,
         )
 
-    st.success("Liquidación generada correctamente.", icon="✅")
-    st.success("Guardado — ya lo podés consultar abajo, en Historial de Liquidaciones.", icon="✅")
+    _render_exito("latam", period, buffer)
     st.caption(f"Período detectado: {period_label(period)}")
 
     if not excluded.empty:
@@ -811,8 +885,7 @@ def _render_jetsmart_result(
             },
         )
 
-    st.success("Liquidación generada correctamente.", icon="✅")
-    st.success("Guardado — ya lo podés consultar abajo, en Historial de Liquidaciones.", icon="✅")
+    _render_exito("jetsmart", period, buffer)
     vuelos_txt = ", ".join(f"{station} {n}" for station, n in vuelos_inter.items())
     st.caption(
         f"Período detectado: {period_label(period)} · {len(guias)} guías · "
@@ -825,185 +898,221 @@ def _render_jetsmart_result(
 
 
 # ---------------------------------------------------------------------------
-# Titulo principal (jerarquia por encima del banner de marca, sin tocarlo)
+# Encabezado: marca + nombre de la herramienta, compacto, para que la accion
+# principal (cargar un archivo) quede arriba, sin scrollear.
 # ---------------------------------------------------------------------------
 st.markdown(
-    f'<div class="hwc-page-title"><img class="hwc-page-title-logo" src="{LOGO_DATA_URI}" alt="Handyway Cargo" />Handyway Cargo</div>',
-    unsafe_allow_html=True,
-)
-
-# ---------------------------------------------------------------------------
-# Banner de marca
-# ---------------------------------------------------------------------------
-st.markdown(
-    """
+    f"""
 <div class="hwc-hero">
-    <p class="hwc-hero-sub">Cargá un archivo nuevo para procesar, o consultá el historial de liquidaciones ya generadas.</p>
-    <span class="hwc-hero-tag">Liquidaciones Handyway Cargo</span>
+    <div class="hwc-hero-brand">
+        <span class="hwc-hero-logo"><img src="{LOGO_DATA_URI}" alt="Handyway Cargo" /></span>
+        <div>
+            <div class="hwc-hero-title">Reportes HWC</div>
+            <p class="hwc-hero-sub">Liquidaciones por aerolínea · Handyway Cargo</p>
+        </div>
+    </div>
 </div>
 """,
     unsafe_allow_html=True,
 )
 
-# ---------------------------------------------------------------------------
-# Seccion 1: Cargar archivo nuevo -- formulario + resultado inmediato de
-# procesarlo. Va junto y siempre visible porque es un solo flujo de
-# principio a fin.
-# ---------------------------------------------------------------------------
-with st.container(key="zona_carga"):
-    st.markdown('<div class="hwc-section-title">📥 Cargar archivo nuevo</div>', unsafe_allow_html=True)
+
+def _step(num: int, titulo: str, ayuda: str | None = None) -> None:
+    ayuda_html = f'<div class="hwc-step-help">{ayuda}</div>' if ayuda else ""
     st.markdown(
-        '<p class="hwc-section-sub">Subí el export, elegí la aerolínea y procesalo. El resultado aparece acá mismo.</p>',
+        f'<div class="hwc-step"><span class="hwc-step-num">{num}</span><div>'
+        f'<div class="hwc-step-title">{titulo}</div>{ayuda_html}</div></div>',
         unsafe_allow_html=True,
     )
 
-    with st.container(border=True, key="card_upload"):
-        st.markdown('<div class="hwc-step"><span class="hwc-step-num">1</span>📄 Subí el archivo</div>', unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("Archivo original (export del sistema)", type="xlsx", label_visibility="collapsed")
 
-    # -----------------------------------------------------------------------
-    # Seccion 2: elegir aerolinea + generar
-    # -----------------------------------------------------------------------
+def _checklist(requisitos: list[tuple[str, bool]]) -> None:
+    """Que falta para poder procesar: explica por que el boton esta
+    deshabilitado, en vez de dejarlo gris sin motivo."""
+    if all(ok for _, ok in requisitos):
+        st.markdown(
+            '<div class="hwc-ready"><span class="hwc-dot hwc-dot-success">✓</span>'
+            "Todo listo. Revisá que sea el archivo correcto y procesalo.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+    items = "".join(
+        f'<li class="{"hwc-req-ok" if ok else "hwc-req-pending"}">'
+        f'<span class="hwc-dot {"hwc-dot-success" if ok else "hwc-dot-pending"}">{"✓" if ok else ""}</span>{texto}</li>'
+        for texto, ok in requisitos
+    )
+    st.markdown(
+        f'<div class="hwc-req"><div class="hwc-req-title">Para procesar falta completar:</div><ul>{items}</ul></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Seccion 1: Cargar archivo nuevo -- formulario + resultado inmediato de
+# procesarlo. Va junto y siempre visible porque es un solo flujo de
+# principio a fin. Orden: aerolinea primero, porque el archivo que hay que
+# subir depende de ella (JetSmart usa el archivo de trabajo, no el export).
+# ---------------------------------------------------------------------------
+with st.container(key="zona_carga"):
+    st.markdown('<div class="hwc-section-title">Cargar archivo nuevo</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="hwc-section-sub">Elegí la aerolínea, subí el archivo y procesalo. El resultado aparece acá mismo.</p>',
+        unsafe_allow_html=True,
+    )
+
     with st.container(border=True, key="card_config"):
-        st.markdown('<div class="hwc-step"><span class="hwc-step-num">2</span>✈️ Elegí la aerolínea</div>', unsafe_allow_html=True)
-        airline_key = st.selectbox("Aerolínea", options=sorted(AIRLINE_CONFIGS), format_func=str.upper, label_visibility="collapsed")
+        _step(1, "Elegí la aerolínea")
+        airline_key = st.segmented_control(
+            "Aerolínea", options=sorted(AIRLINE_CONFIGS), format_func=_airline_name,
+            key="aerolinea_sel", label_visibility="collapsed", width="stretch",
+        )
+    es_jetsmart_sel = airline_key is not None and AIRLINE_CONFIGS[airline_key].get("flow") == FLOW_JETSMART
 
-        # JetSmart necesita datos que no vienen en ningun export: el tipo
-        # de cambio del periodo (todavia sin confirmar de donde sale -- por
-        # ahora manual) y la cantidad de vuelos internacionales por estacion
-        # de los manifiestos. Sin TC no se puede calcular GHA Services.
-        faltan_datos = False
-        if AIRLINE_CONFIGS[airline_key].get("flow") == FLOW_JETSMART:
-            st.caption(
-                "Para JetSmart, el archivo del paso 1 es el archivo de trabajo del mes (LIQUIDACION ECS): "
-                "la hoja BD con el export de guías primero, y la hoja ARIEL con el archivo de Ariel."
-            )
+    with st.container(border=True, key="card_upload"):
+        _step(2, "Subí el archivo", _archivo_hint(airline_key))
+        # Etiqueta fija + key: si cambia la aerolinea, el archivo ya subido
+        # no se pierde (la ayuda dinamica va arriba, en _step).
+        uploaded_file = st.file_uploader("Archivo del mes", type="xlsx", key="archivo_mes", label_visibility="collapsed")
+
+        # JetSmart necesita ademas el archivo de trabajo del mes anterior
+        # (cruce con Ariel) y, opcional, el export del mes siguiente.
+        archivo_anterior = export_siguiente_file = None
+        if es_jetsmart_sel:
             archivo_anterior = st.file_uploader(
-                "Archivo de trabajo del mes anterior (LIQUIDACION ECS, con hojas BD y ARIEL) — obligatorio",
+                "Archivo de trabajo del mes anterior (LIQUIDACION ECS, con hojas BD y ARIEL)",
                 type="xlsx", key="js_anterior",
             )
             export_siguiente_file = st.file_uploader(
-                "Export de guías del mes siguiente — opcional, confirma las guías del último día del mes",
+                "Export de guías del mes siguiente (opcional: confirma las guías del último día del mes)",
                 type="xlsx", key="js_siguiente",
             )
+
+    # JetSmart necesita datos que no vienen en ningun export: el tipo de
+    # cambio del periodo (todavia sin confirmar de donde sale -- por ahora
+    # manual) y la cantidad de vuelos internacionales por estacion de los
+    # manifiestos. Sin TC no se puede calcular GHA Services.
+    tipo_cambio, vuelos_inter = 0.0, {}
+    if es_jetsmart_sel:
+        with st.container(border=True, key="card_datos"):
+            _step(3, "Completá los datos del período", "No vienen en ningún archivo: salen del tipo de cambio del mes y de los manifiestos.")
             tipo_cambio = st.number_input("Tipo de cambio del período (ARS por USD)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
             vuelos_cols = st.columns(len(JETSMART_COMISION_INTER_USD_POR_VUELO))
-            vuelos_inter = {}
             for col, (station, usd) in zip(vuelos_cols, JETSMART_COMISION_INTER_USD_POR_VUELO.items()):
                 with col:
                     vuelos_inter[station] = int(st.number_input(
                         f"Vuelos internacionales {station} ({usd:g} USD c/u)", min_value=0, value=0, step=1,
                     ))
-            faltantes = []
-            if uploaded_file is not None and not has_ariel_sheet(uploaded_file):
-                faltantes.append("un archivo del mes con la hoja ARIEL (el del paso 1 no la tiene)")
-            if archivo_anterior is None:
-                faltantes.append("el archivo de trabajo del mes anterior")
-            elif not has_ariel_sheet(archivo_anterior):
-                faltantes.append("un archivo del mes anterior con la hoja ARIEL")
-            if tipo_cambio <= 0:
-                faltantes.append("el tipo de cambio")
-            faltan_datos = bool(faltantes)
-            if faltan_datos:
-                st.caption("Para poder procesar falta: " + "; ".join(faltantes) + ".")
 
-        generate = st.button("Procesar y guardar", disabled=uploaded_file is None or faltan_datos, type="primary")
+    requisitos = [("Elegir la aerolínea", airline_key is not None), ("Subir el archivo del mes", uploaded_file is not None)]
+    if es_jetsmart_sel:
+        if uploaded_file is not None and not has_ariel_sheet(uploaded_file):
+            requisitos[1] = ("El archivo del mes tiene que tener la hoja ARIEL (el que subiste no la tiene)", False)
+        if archivo_anterior is not None and not has_ariel_sheet(archivo_anterior):
+            requisitos.append(("El archivo del mes anterior tiene que tener la hoja ARIEL", False))
+        else:
+            requisitos.append(("Subir el archivo de trabajo del mes anterior", archivo_anterior is not None))
+        requisitos.append(("Cargar el tipo de cambio", tipo_cambio > 0))
+    listo = all(ok for _, ok in requisitos)
+
+    with st.container(key="card_accion"):
+        _checklist(requisitos)
+        generate = st.button(
+            f"Procesar y guardar · {_airline_name(airline_key)}" if airline_key else "Procesar y guardar",
+            disabled=not listo, type="primary", icon=":material/play_arrow:", width="stretch",
+        )
 
     # -----------------------------------------------------------------------
-    # Seccion 3: resultado (misma seccion -- no hace falta ir a otro lado
-    # para ver lo que se acaba de procesar).
+    # Resultado (misma seccion -- no hace falta ir a otro lado para ver lo
+    # que se acaba de procesar). Si el archivo no es el esperado (ej. el
+    # export de otra aerolinea), se explica en vez de mostrar un traceback.
     # -----------------------------------------------------------------------
     if generate:
         with st.container(border=True, key="card_result"):
-            st.markdown('<div class="hwc-step"><span class="hwc-step-num">3</span>📊 Resultado</div>', unsafe_allow_html=True)
-
+            st.markdown('<div class="hwc-result-title">Resultado</div>', unsafe_allow_html=True)
             airline_cfg = AIRLINE_CONFIGS[airline_key]
-
-            if airline_cfg.get("flow") == FLOW_JETSMART:
-                buffer, period = _render_jetsmart_result(
-                    uploaded_file, tipo_cambio, vuelos_inter, archivo_anterior, export_siguiente_file,
-                )
-            elif airline_cfg.get("flow") == FLOW_LIQUIDACION:
-                buffer, _, period = _render_liquidacion_result(uploaded_file)
-            else:
-                with st.spinner("Generando reporte..."):
-                    df = load_original(uploaded_file)
-                    period, excluded = detect_period_exclusions(df, airline_key)
-                    sheets = build_airline_report(df, airline_key, period=period)
-
-                    buffer = io.BytesIO()
-                    write_report(sheets, buffer)
-                    buffer.seek(0)
-
-                    guardar_reporte_simple(
-                        nombre_archivo=uploaded_file.name,
-                        file_bytes=uploaded_file.getvalue(),
-                        df=df,
-                        airline_key=airline_key,
-                        period=period,
-                        sheets=sheets,
+            try:
+                if airline_cfg.get("flow") == FLOW_JETSMART:
+                    buffer, period = _render_jetsmart_result(
+                        uploaded_file, tipo_cambio, vuelos_inter, archivo_anterior, export_siguiente_file,
                     )
+                elif airline_cfg.get("flow") == FLOW_LIQUIDACION:
+                    buffer, _, period = _render_liquidacion_result(uploaded_file)
+                else:
+                    with st.spinner("Generando reporte..."):
+                        df = load_original(uploaded_file)
+                        period, excluded = detect_period_exclusions(df, airline_key)
+                        sheets = build_airline_report(df, airline_key, period=period)
 
-                st.success("Reporte generado correctamente.", icon="✅")
-                st.success("Guardado — ya lo podés consultar abajo, en Historial de Liquidaciones.", icon="✅")
-                st.caption(f"Período detectado: {period_label(period)}")
+                        buffer = io.BytesIO()
+                        write_report(sheets, buffer)
+                        buffer.seek(0)
 
-                if not excluded.empty:
-                    breakdown = excluded[COL_COD_VUELO].map(extract_period).value_counts()
-                    detalle_txt = ", ".join(f"{n} de {period_label(p)}" for p, n in breakdown.items())
-                    fila_word = "fila" if len(excluded) == 1 else "filas"
-                    st.warning(
-                        f"Se excluyeron {len(excluded)} {fila_word} fuera del período detectado "
-                        f"({period_label(period)}) del reporte de {airline_key.upper()}: {detalle_txt}.",
-                        icon="⚠️",
-                    )
+                        guardar_reporte_simple(
+                            nombre_archivo=uploaded_file.name,
+                            file_bytes=uploaded_file.getvalue(),
+                            df=df,
+                            airline_key=airline_key,
+                            period=period,
+                            sheets=sheets,
+                        )
 
-                unconfirmed_stations = airline_cfg.get("unconfirmed_stations", [])
-                if unconfirmed_stations:
-                    activity = detect_unconfirmed_activity(sheets, unconfirmed_stations)
-                    if activity:
-                        estaciones = ", ".join(activity)
+                    _render_exito(airline_key, period, buffer)
+                    st.caption(f"Período detectado: {period_label(period)}")
+
+                    if not excluded.empty:
+                        breakdown = excluded[COL_COD_VUELO].map(extract_period).value_counts()
+                        detalle_txt = ", ".join(f"{n} de {period_label(p)}" for p, n in breakdown.items())
+                        fila_word = "fila" if len(excluded) == 1 else "filas"
                         st.warning(
-                            f"Se detectaron movimientos en {estaciones} para {airline_key.upper()}. "
-                            f"La tarifa aplicada ahí todavía no está confirmada con el cliente — "
-                            f"revisá los montos manualmente antes de usarlos.",
+                            f"Se excluyeron {len(excluded)} {fila_word} fuera del período detectado "
+                            f"({period_label(period)}) del reporte de {airline_key.upper()}: {detalle_txt}.",
                             icon="⚠️",
                         )
 
-                for charge_type_key in airline_cfg["charge_types"]:
-                    icon, label = CHARGE_TYPE_LABELS.get(charge_type_key, ("📁", charge_type_key))
-                    group_sheets = _sheets_for_charge_type(sheets, charge_type_key)
-
-                    rows_html = ""
-                    for sheet_name, sheet_df in group_sheets.items():
-                        n_rows = len(sheet_df)
-                        if n_rows == 0:
-                            rows_html += (
-                                f'<div class="hwc-row hwc-row-empty">'
-                                f'<span class="hwc-dot hwc-dot-empty">–</span>{sheet_name} · sin movimiento</div>'
-                            )
-                        else:
-                            rows_html += (
-                                f'<div class="hwc-row hwc-row-active">'
-                                f'<span class="hwc-dot hwc-dot-active">✓</span>{sheet_name}'
-                                f'<span class="hwc-count">{n_rows} filas</span></div>'
+                    unconfirmed_stations = airline_cfg.get("unconfirmed_stations", [])
+                    if unconfirmed_stations:
+                        activity = detect_unconfirmed_activity(sheets, unconfirmed_stations)
+                        if activity:
+                            estaciones = ", ".join(activity)
+                            st.warning(
+                                f"Se detectaron movimientos en {estaciones} para {airline_key.upper()}. "
+                                f"La tarifa aplicada ahí todavía no está confirmada con el cliente — "
+                                f"revisá los montos manualmente antes de usarlos.",
+                                icon="⚠️",
                             )
 
-                    st.markdown(
-                        f'<div class="hwc-group-card">'
-                        f'<div class="hwc-group-title">{icon} {label}</div>'
-                        f'{rows_html}</div>',
-                        unsafe_allow_html=True,
-                    )
+                    for charge_type_key in airline_cfg["charge_types"]:
+                        icon, label = CHARGE_TYPE_LABELS.get(charge_type_key, ("📁", charge_type_key))
+                        group_sheets = _sheets_for_charge_type(sheets, charge_type_key)
 
-            st.caption("Descarga opcional — la liquidación ya quedó guardada.")
-            st.download_button(
-                label="⬇️ Descargar Excel",
-                data=buffer,
-                file_name=f"{airline_key}_{period_slug(period)}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="secondary",
-            )
+                        rows_html = ""
+                        for sheet_name, sheet_df in group_sheets.items():
+                            n_rows = len(sheet_df)
+                            if n_rows == 0:
+                                rows_html += (
+                                    f'<div class="hwc-row hwc-row-empty">'
+                                    f'<span class="hwc-dot hwc-dot-empty">–</span>{sheet_name} · sin movimiento</div>'
+                                )
+                            else:
+                                rows_html += (
+                                    f'<div class="hwc-row hwc-row-active">'
+                                    f'<span class="hwc-dot hwc-dot-active">✓</span>{sheet_name}'
+                                    f'<span class="hwc-count">{n_rows} filas</span></div>'
+                                )
+
+                        st.markdown(
+                            f'<div class="hwc-group-card">'
+                            f'<div class="hwc-group-title">{icon} {label}</div>'
+                            f'{rows_html}</div>',
+                            unsafe_allow_html=True,
+                        )
+            except Exception as exc:  # el detalle tecnico va aparte, chico
+                st.error(
+                    f"**No se pudo procesar el archivo como {_airline_name(airline_key)}.** "
+                    "Revisá que sea el archivo correcto para esa aerolínea y volvé a intentarlo.",
+                    icon=":material/error:",
+                )
+                st.caption(f"Detalle técnico: {type(exc).__name__}: {exc}")
 
 
 # ---------------------------------------------------------------------------

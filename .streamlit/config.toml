@@ -9,3 +9,11 @@ enableXsrfProtection = false
 
 [browser]
 gatherUsageStats = false
+
+# Tema: el color primario de Streamlit (seleccion, foco, toggles) es rojo
+# por defecto; se reemplaza por el azul de marca (--hwc-blue en app.py) para
+# que los controles nativos sean coherentes con el resto de la identidad.
+[theme]
+base = "light"
+primaryColor = "#2D79AB"
+textColor = "#1F2933"
