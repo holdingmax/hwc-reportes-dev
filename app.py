@@ -440,6 +440,12 @@ div[data-baseweb="select"] > div {{ border-radius: 8px !important; }}
 
 .hwc-kpis {{ display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 0.9rem; margin: 0.4rem 0 1.2rem 0; }}
 .hwc-kpi {{ background: #F5F8FB; border: 1px solid var(--hwc-border); border-radius: 12px; padding: 0.9rem 1.05rem; }}
+/* Cada grafico (titulo + chart) en su propia card, igual que los indicadores. */
+.st-key-card_chart_aerolinea[data-testid="stVerticalBlock"],
+.st-key-card_chart_mes[data-testid="stVerticalBlock"] {{
+    background: #F5F8FB; border: 1px solid var(--hwc-border); border-radius: 12px;
+    padding: 0.95rem 1.1rem 0.6rem 1.1rem; height: 100%;
+}}
 .hwc-kpi-hero {{ background: linear-gradient(135deg, var(--hwc-blue-deep) 0%, var(--hwc-blue) 100%); border: none; }}
 .hwc-kpi-label {{ font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--hwc-text-muted); }}
 .hwc-kpi-value {{ font-size: 1.45rem; font-weight: 800; color: var(--hwc-blue-text); margin-top: 0.2rem; line-height: 1.2; }}
@@ -635,8 +641,12 @@ def _grafico_barras(
         color=_CHART_TEXT, fontSize=12, fontWeight=600,
         **({"align": "left", "dx": 6} if horizontal else {"baseline": "bottom", "dy": -6}),
     ).encode(text="rotulo:N")
-    alto = max(150, 48 * len(df)) if horizontal else 240
-    return (barras + rotulos).properties(height=alto).configure_view(strokeWidth=0)
+    # Misma altura minima en los dos graficos: van lado a lado, en cards.
+    alto = max(240, 48 * len(df)) if horizontal else 240
+    return (
+        (barras + rotulos).properties(height=alto, background="transparent")
+        .configure_view(strokeWidth=0)
+    )
 
 
 def _obtener_detalle_liquidacion(fila) -> tuple[pd.DataFrame, dict | None, str | None] | None:
@@ -1326,7 +1336,8 @@ with st.container(key="zona_historial"):
                 # Dos graficos, ambos SOLO con montos vigentes (misma
                 # logica que el total de arriba) para no duplicar plata.
                 # ---------------------------------------------------------
-                col_chart1, col_chart2 = st.columns(2, gap="large")
+                # gap "small" (1rem): mismo espaciado que la grilla de indicadores.
+                col_chart1, col_chart2 = st.columns(2, gap="small")
                 with col_chart1:
                     with st.container(key="card_chart_aerolinea"):
                         st.markdown('<div class="hwc-chart-title">Total facturado por aerolínea</div>', unsafe_allow_html=True)
