@@ -75,32 +75,65 @@ python -m src.main --airline gol --input "data/archivo original.xlsx" --output "
 
 JetSmart tiene su propio flujo (`src/jetsmart_builder.py`), porque no parte de
 `archivo original.xlsx` sino del export del sistema de guías filtrado por
-Empresa (`# Guía`, `KGs`, `$ Prioridad`, …), y su liquidación no se parece a la
-de LATAM. Genera las hojas GUIAS, LIQUIDACION, CVLP y COMISIONES INTER:
+Empresa (`# Guía`, `KGs`, `$ Prioridad`, …) cruzado contra el archivo de Ariel
+(ver abajo), y su liquidación no se parece a la de LATAM. Genera las hojas
+GUIAS, LIQUIDACION, CVLP y COMISIONES INTER:
 
-- **Ventas Netas**: suma de `$ Prioridad`. Ventas totales = netas + IVA 21%.
+- **Ventas Netas**: suma del ingreso de las guías que entran (valores de Ariel). Ventas totales = netas + IVA 21%.
 - **Comisión doméstica**: 7,5% de Ventas Netas.
 - **Comisión internacional**: vuelos × USD por vuelo (EZE 17,5, MDZ 35) × TC.
 - **GHA Services**: Kg por estación de origen × tarifa USD/kg × TC.
 - **IVA de servicios e IIBB**: 0, igual que en la planilla de julio 2026.
 
 ```
-python -m src.main --airline jetsmart --input export_guias.xlsx --tc 1485 --vuelos EZE=56 MDZ=38
+python -m src.main --airline jetsmart --input "LIQUIDACION ECS 07-2026.xlsx"     --anterior "LIQUIDACION ECS 06-2026.xlsx" [--siguiente export_agosto.xlsx]     --tc 1485 --vuelos EZE=56 MDZ=38
 ```
 
 Datos manuales: el **tipo de cambio** y la **cantidad de vuelos
 internacionales** (salen de los manifiestos) no vienen en ningún export. Se
 cargan al generar la liquidación, en la app o por CLI.
 
-Fuera de alcance: el cruce contra el archivo de Ariel (JetSmart) y la
-validación contra AFIP. Por eso la liquidación toma todas las guías del export
-tal cual vienen, y la app lo avisa. En julio 2026 eso da +$525.640 de Ventas
-Netas contra la liquidación armada a mano (36 guías del export que el cruce
-dejó afuera y 24 que agregó).
+### Cruce con Ariel (`src/jetsmart_cruce.py`)
 
-Regresión: `python -m unittest tests.test_jetsmart_regresion -v`. Necesita los
-archivos reales en `tests/fixtures/jetsmart/`, que no se versionan. Compara
-celda por celda las hojas LIQUIDACION y CVLP contra `LIQ_ECS_07-2026_00000005.xlsx`.
+Reemplaza la comparación manual de la hoja CONTROL. Entradas: el archivo de
+trabajo del mes (hoja BD con el export de guías primero, y hoja ARIEL), el
+archivo de trabajo del mes anterior (obligatorio) y, opcionalmente, el export
+de guías del mes siguiente. Ariel es la fuente de la liquidación: lo que entra
+se liquida con los Kg, el ingreso y el origen de Ariel.
+
+- Se descartan las guías anuladas de Ariel antes de cruzar. Ariel reusa el
+  número de una anulada para otra guía válida.
+- **En los dos archivos con los mismos valores**: entra.
+- **En los dos, con diferencia de Kg o ingreso** (sin tolerancia): entra con
+  los valores de Ariel y se marca como excepción.
+- **Solo en el export**: si está en el Ariel del mes anterior, ya se liquidó
+  ese mes y queda afuera sin excepción. Si no, es *pendiente de declarar*:
+  queda afuera y se marca.
+- **Solo en Ariel**: entra si está en el export del mes anterior (una pendiente
+  que Ariel declara ahora) o en el export del mes siguiente. Si ese export no
+  se cargó y la fecha de Ariel es el último día calendario del mes, entra igual
+  con un aviso visible. Si no hay forma de confirmarla, o ya estaba en el Ariel
+  del mes anterior, queda afuera y va a revisión manual.
+
+La app y el Excel (hojas EXCEPCIONES CRUCE e INCLUIDAS ULTIMO DIA) muestran
+solo las excepciones, no lo que cruza limpio. Fuera de alcance: la validación
+contra AFIP.
+
+Validación contra la hoja GUIAS de las liquidaciones finales de Anita
+(`tests/test_jetsmart_cruce.py`):
+
+- **Julio 2026**: incluye exactamente las 1949 guías de la final, con 2
+  excepciones. La 94940 tiene $7.956 en Ariel y $12.000 en la final, porque
+  Anita la corrigió a mano; es la única diferencia de totales (−$4.044 de
+  Ventas Netas). La 96640 queda pendiente de declarar.
+- **Junio 2026**: 17 excepciones y ninguna guía incluida de más. Faltan 9 contra
+  la final: 3 que Anita agregó a mano (92364, 92378, 92409) y 6 del 01-02/06
+  que quedan a revisión manual porque no hay archivos de mayo para confirmarlas.
+
+Tests: `python -m unittest tests.test_jetsmart_regresion tests.test_jetsmart_cruce -v`.
+Necesitan los archivos reales en `tests/fixtures/jetsmart/`, que no se
+versionan. La regresión compara celda por celda las hojas LIQUIDACION y CVLP
+contra `LIQ_ECS_07-2026_00000005.xlsx`.
 
 ## Pendiente de confirmar con el cliente
 

@@ -14,13 +14,11 @@ JetSmart no encaja en ninguno de los dos flujos existentes:
 Formulas relevadas celda por celda de LIQ_ECS_07-2026_00000005.xlsx y
 validadas al centavo en tests/test_jetsmart_regresion.py.
 
-FUERA DE ALCANCE (a proposito): el cruce guia por guia contra el archivo de
-Ariel Carcagno y la validacion contra AFIP. En la liquidacion a mano, ese
-cruce define QUE guias entran (difiere al mes siguiente las que volaron
-despues del cierre, suma las que faltan en el export, etc.). Esta
-liquidacion toma TODAS las guias del export tal cual vienen, asi que sus
-totales van a diferir de la liquidacion final por esas guias hasta que el
-cruce se automatice -- ver aviso en app.py.
+QUE guias entran lo define el cruce contra el archivo de Ariel
+(jetsmart_cruce.py): app.py y main.py le pasan a build_jetsmart_guias las
+guias ya cruzadas, con los valores de Ariel. Las funciones de este modulo no
+saben nada del cruce: arman la liquidacion sobre cualquier lista de guias en
+formato export. Fuera de alcance: la validacion contra AFIP.
 """
 
 import calendar
@@ -82,6 +80,8 @@ def load_jetsmart_export(path) -> pd.DataFrame:
     - Filtra por Empresa == JetSmart sin distinguir mayusculas (el export
       real trae "Jetsmart").
     """
+    if hasattr(path, "seek"):
+        path.seek(0)  # archivo subido en Streamlit: puede haberse leido antes
     df = pd.read_excel(path, sheet_name=0)
     faltantes = [c for c in _REQUIRED_COLUMNS if c not in df.columns]
     if faltantes:
@@ -376,9 +376,25 @@ def _write_comisiones_inter_sheet(writer: pd.ExcelWriter, resumen: dict) -> None
     ws.column_dimensions["E"].width = 16
 
 
-def write_jetsmart_liquidacion(guias: pd.DataFrame, resumen: dict, period: Period, output_path) -> None:
+def _write_cruce_sheets(writer: pd.ExcelWriter, excepciones: pd.DataFrame, incluidas_ultimo_dia: pd.DataFrame) -> None:
+    """Resultado del cruce con Ariel (ver jetsmart_cruce.py): solo las
+    excepciones, y aparte las guias incluidas por la regla de ultimo dia."""
+    if excepciones.empty:
+        pd.DataFrame({"Excepciones del cruce": ["Sin excepciones: todas las guías cruzaron limpio."]}).to_excel(
+            writer, sheet_name="EXCEPCIONES CRUCE", index=False)
+    else:
+        excepciones.to_excel(writer, sheet_name="EXCEPCIONES CRUCE", index=False)
+    if not incluidas_ultimo_dia.empty:
+        incluidas_ultimo_dia.to_excel(writer, sheet_name="INCLUIDAS ULTIMO DIA", index=False)
+
+
+def write_jetsmart_liquidacion(guias: pd.DataFrame, resumen: dict, period: Period, output_path, cruce: dict | None = None) -> None:
+    """cruce: {"excepciones": DataFrame, "incluidas_ultimo_dia": DataFrame}
+    del cruce con Ariel, si la liquidacion se armo a partir de el."""
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         _write_guias_sheet(writer, guias)
         _write_liquidacion_sheet(writer, resumen, period)
         _write_cvlp_sheet(writer, resumen, period)
         _write_comisiones_inter_sheet(writer, resumen)
+        if cruce is not None:
+            _write_cruce_sheets(writer, cruce["excepciones"], cruce["incluidas_ultimo_dia"])

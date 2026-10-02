@@ -66,6 +66,7 @@ from src.liquidacion_builder import (
     detect_unconfirmed_station_activity,
     write_liquidacion,
 )
+from src.jetsmart_cruce import cruzar_jetsmart, has_ariel_sheet, load_ariel
 from src.jetsmart_builder import (
     build_jetsmart_guias,
     build_jetsmart_resumen,
@@ -523,6 +524,7 @@ def _obtener_detalle_liquidacion(fila) -> tuple[pd.DataFrame, dict | None, str |
         guias = pd.DataFrame(detalle_totales["guias"])
         parametros = detalle_totales["parametros"]
         resumen = build_jetsmart_resumen(guias, parametros["tipo_cambio"], parametros["vuelos_inter"])
+        resumen["_cruce"] = detalle_totales.get("cruce")
         return guias, resumen, None
 
     movimientos = obtener_movimientos_de_carga(int(fila["carga_id"]))
@@ -659,7 +661,7 @@ def _jetsmart_resumen_html(resumen: dict) -> str:
     )
 
 
-def _jetsmart_avisos(resumen: dict, filas_otros_meses: int, period: tuple[str, str]) -> None:
+def _jetsmart_avisos(resumen: dict) -> None:
     """Avisos amarillos de JetSmart: nunca bloquean el calculo."""
     activity = unconfirmed_tarifa_activity(resumen)
     if activity:
@@ -678,30 +680,100 @@ def _jetsmart_avisos(resumen: dict, filas_otros_meses: int, period: tuple[str, s
             f"(se aplicó {detalle_txt}). Revisá GHA Services antes de usar estos montos.",
             icon="⚠️",
         )
-    st.warning(
-        "Sin cruce con el archivo de JetSmart (Ariel): esta liquidación toma todas las guías del export "
-        "tal cual vienen. Las guías que el cruce difiere al mes siguiente (voló después del cierre) o agrega "
-        "no se ajustan, así que los totales pueden diferir de la liquidación final.",
-        icon="⚠️",
+
+
+def _cruce_to_frames(cruce: dict) -> dict:
+    """El cruce guardado en la base viene como listas de dicts; el recien
+    calculado, como DataFrames. Normaliza a DataFrames."""
+    return {
+        "resumen": cruce["resumen"],
+        "excepciones": pd.DataFrame(cruce["excepciones"]),
+        "incluidas_ultimo_dia": pd.DataFrame(cruce["incluidas_ultimo_dia"]),
+    }
+
+
+def _render_cruce(cruce: dict, *, key: str) -> None:
+    """Resultado del cruce con Ariel: resumen, aviso de la regla de ultimo
+    dia y SOLO las excepciones (lo que matchea limpio no se muestra)."""
+    r = cruce["resumen"]
+    excepciones = cruce["excepciones"]
+    ultimo_dia = cruce["incluidas_ultimo_dia"]
+    motivos = r["motivos_inclusion"]
+
+    filas = [
+        ("Guías que entran a la liquidación", f'{r["incluidas"]}'),
+        ("Matchean limpio (export = Ariel)", f'{motivos.get("match", 0)}'),
+        ("Ya declaradas el mes anterior (quedan afuera)", f'{r["ya_declaradas_mes_anterior"]}'),
+        ("Excepciones para revisar", f'{r["excepciones"]}'),
+    ]
+    rows_html = "".join(
+        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
+        f'{label}<span class="hwc-count">{valor}</span></div>'
+        for label, valor in filas
     )
-    if filas_otros_meses:
-        guia_word = "guía creada" if filas_otros_meses == 1 else "guías creadas"
-        st.caption(
-            f"ℹ️ Incluye {filas_otros_meses} {guia_word} fuera de {period_label(period)} "
-            "(se liquidan por mes de vuelo, no de creación; el export no trae la fecha de vuelo)."
+    st.markdown(
+        f'<div class="hwc-group-card"><div class="hwc-group-title">🔀 Cruce con Ariel</div>{rows_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not ultimo_dia.empty:
+        st.warning(
+            f"Se incluyeron {len(ultimo_dia)} guías de Ariel del último día del mes ({r['ultimo_dia']}) "
+            "por la regla de último día, sin confirmación cruzada: no están en el export de este mes y "
+            "todavía no se cargó el export del mes siguiente para confirmarlas.",
+            icon="⚠️",
+        )
+        with st.expander(f"Ver las {len(ultimo_dia)} guías incluidas por la regla de último día", key=f"{key}_ultimo_dia"):
+            st.dataframe(ultimo_dia, use_container_width=True, hide_index=True)
+
+    if r["ingreso_fuera_por_revision"]:
+        st.warning(
+            f"Hay guías de Ariel a revisión manual que quedaron FUERA de la liquidación por "
+            f"{_money(r['ingreso_fuera_por_revision'])} de ingreso. Revisalas en la tabla de excepciones.",
+            icon="⚠️",
         )
 
+    if excepciones.empty:
+        st.caption("Sin excepciones: todas las guías cruzaron limpio.")
+    else:
+        st.markdown('<div class="hwc-group-title">Excepciones del cruce</div>', unsafe_allow_html=True)
+        # Vacio en vez de "None": numeros como numero, texto en blanco.
+        vista = excepciones.copy()
+        for col in ["Kg export", "Kg Ariel", "Ingreso export", "Ingreso Ariel"]:
+            vista[col] = pd.to_numeric(vista[col], errors="coerce")
+        for col in ["Fecha Ariel", "Detalle"]:
+            vista[col] = vista[col].fillna("")
+        st.dataframe(vista, use_container_width=True, hide_index=True, key=f"{key}_excepciones")
 
-def _render_jetsmart_result(uploaded_file, tipo_cambio: float, vuelos_inter: dict[str, int]) -> tuple[object, tuple[str, str]]:
-    """Corre el flujo de liquidacion de JetSmart y muestra su resumen."""
-    with st.spinner("Generando liquidación..."):
+
+def _render_jetsmart_result(
+    uploaded_file, tipo_cambio: float, vuelos_inter: dict[str, int], archivo_anterior, export_siguiente_file,
+) -> tuple[object, tuple[str, str]]:
+    """Corre el cruce con Ariel + la liquidacion de JetSmart y muestra el resultado.
+
+    uploaded_file / archivo_anterior: archivos de trabajo de Anita (hoja BD
+    primero + hoja ARIEL) del mes y del mes anterior. export_siguiente_file:
+    export de guias del mes siguiente, opcional.
+    """
+    with st.spinner("Cruzando con Ariel y generando liquidación..."):
         export = load_jetsmart_export(uploaded_file)
         period, otros_meses = detect_jetsmart_period(export)
-        guias = build_jetsmart_guias(export)
+        ariel, _ = load_ariel(uploaded_file)
+        export_anterior = load_jetsmart_export(archivo_anterior)
+        ariel_anterior, _ = load_ariel(archivo_anterior)
+        export_siguiente = load_jetsmart_export(export_siguiente_file) if export_siguiente_file is not None else None
+        resultado = cruzar_jetsmart(export, ariel, period, export_anterior, ariel_anterior, export_siguiente)
+
+        guias = build_jetsmart_guias(resultado.incluidas)
         resumen = build_jetsmart_resumen(guias, tipo_cambio, vuelos_inter)
+        cruce = {
+            "resumen": resultado.resumen,
+            "excepciones": resultado.excepciones,
+            "incluidas_ultimo_dia": resultado.incluidas_ultimo_dia,
+        }
 
         buffer = io.BytesIO()
-        write_jetsmart_liquidacion(guias, resumen, period, buffer)
+        write_jetsmart_liquidacion(guias, resumen, period, buffer, cruce=cruce)
         buffer.seek(0)
 
         guardar_liquidacion_jetsmart(
@@ -713,6 +785,11 @@ def _render_jetsmart_result(uploaded_file, tipo_cambio: float, vuelos_inter: dic
             guias=guias,
             resumen=resumen,
             parametros={"tipo_cambio": tipo_cambio, "vuelos_inter": vuelos_inter},
+            cruce={
+                "resumen": resultado.resumen,
+                "excepciones": resultado.excepciones.astype(object).where(resultado.excepciones.notna(), None).to_dict(orient="records"),
+                "incluidas_ultimo_dia": resultado.incluidas_ultimo_dia.to_dict(orient="records"),
+            },
         )
 
     st.success("Liquidación generada correctamente.", icon="✅")
@@ -722,7 +799,8 @@ def _render_jetsmart_result(uploaded_file, tipo_cambio: float, vuelos_inter: dic
         f"Período detectado: {period_label(period)} · {len(guias)} guías · "
         f"TC {tipo_cambio:,.2f} y vuelos internacionales ({vuelos_txt}) cargados a mano."
     )
-    _jetsmart_avisos(resumen, len(otros_meses), period)
+    _jetsmart_avisos(resumen)
+    _render_cruce(cruce, key="resultado_cruce")
     st.markdown(_jetsmart_resumen_html(resumen), unsafe_allow_html=True)
     return buffer, period
 
@@ -776,7 +854,18 @@ with st.container(border=True, key="card_config"):
     # de los manifiestos. Sin TC no se puede calcular GHA Services.
     faltan_datos = False
     if AIRLINE_CONFIGS[airline_key].get("flow") == FLOW_JETSMART:
-        st.caption("JetSmart usa el export del sistema de guías (# Guía, KGs, $ Prioridad…), no el archivo original.")
+        st.caption(
+            "Para JetSmart, el archivo del paso 1 es el archivo de trabajo del mes (LIQUIDACION ECS): "
+            "la hoja BD con el export de guías primero, y la hoja ARIEL con el archivo de Ariel."
+        )
+        archivo_anterior = st.file_uploader(
+            "Archivo de trabajo del mes anterior (LIQUIDACION ECS, con hojas BD y ARIEL) — obligatorio",
+            type="xlsx", key="js_anterior",
+        )
+        export_siguiente_file = st.file_uploader(
+            "Export de guías del mes siguiente — opcional, confirma las guías del último día del mes",
+            type="xlsx", key="js_siguiente",
+        )
         tipo_cambio = st.number_input("Tipo de cambio del período (ARS por USD)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
         vuelos_cols = st.columns(len(JETSMART_COMISION_INTER_USD_POR_VUELO))
         vuelos_inter = {}
@@ -785,9 +874,18 @@ with st.container(border=True, key="card_config"):
                 vuelos_inter[station] = int(st.number_input(
                     f"Vuelos internacionales {station} ({usd:g} USD c/u)", min_value=0, value=0, step=1,
                 ))
-        faltan_datos = tipo_cambio <= 0
+        faltantes = []
+        if uploaded_file is not None and not has_ariel_sheet(uploaded_file):
+            faltantes.append("un archivo del mes con la hoja ARIEL (el del paso 1 no la tiene)")
+        if archivo_anterior is None:
+            faltantes.append("el archivo de trabajo del mes anterior")
+        elif not has_ariel_sheet(archivo_anterior):
+            faltantes.append("un archivo del mes anterior con la hoja ARIEL")
+        if tipo_cambio <= 0:
+            faltantes.append("el tipo de cambio")
+        faltan_datos = bool(faltantes)
         if faltan_datos:
-            st.caption("Cargá el tipo de cambio para poder procesar.")
+            st.caption("Para poder procesar falta: " + "; ".join(faltantes) + ".")
 
     generate = st.button("Procesar y guardar", disabled=uploaded_file is None or faltan_datos, type="primary")
 
@@ -802,7 +900,9 @@ if generate:
         airline_cfg = AIRLINE_CONFIGS[airline_key]
 
         if airline_cfg.get("flow") == FLOW_JETSMART:
-            buffer, period = _render_jetsmart_result(uploaded_file, tipo_cambio, vuelos_inter)
+            buffer, period = _render_jetsmart_result(
+                uploaded_file, tipo_cambio, vuelos_inter, archivo_anterior, export_siguiente_file,
+            )
         elif airline_cfg.get("flow") == FLOW_LIQUIDACION:
             buffer, _, period = _render_liquidacion_result(uploaded_file)
         else:
@@ -1086,7 +1186,10 @@ with st.expander("Ver historial (filtros, gráficos y detalle de cada liquidaci�
                         detalle_df, resumen, sheet_name = resultado_detalle
                         es_jetsmart = fila_sel["tipo_cargo"] == "jetsmart_liquidacion"
 
+                        cruce_guardado = _cruce_to_frames(resumen["_cruce"]) if es_jetsmart and resumen.get("_cruce") else None
                         if es_jetsmart:
+                            if cruce_guardado is not None:
+                                _render_cruce(cruce_guardado, key="hist_cruce")
                             st.markdown(_jetsmart_resumen_html(resumen), unsafe_allow_html=True)
                             st.caption(
                                 f"{len(detalle_df)} guías (hoja \"GUIAS\") — TC {resumen['tipo_cambio']:,.2f}. "
@@ -1150,6 +1253,7 @@ with st.expander("Ver historial (filtros, gráficos y detalle de cada liquidaci�
                         if es_jetsmart:
                             write_jetsmart_liquidacion(
                                 detalle_df, resumen, (fila_sel["periodo_mes"], fila_sel["periodo_anio"]), detalle_buffer,
+                                cruce=cruce_guardado,
                             )
                         elif resumen is not None:
                             write_liquidacion(detalle_df, resumen, detalle_buffer)

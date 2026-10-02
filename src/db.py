@@ -322,6 +322,7 @@ def guardar_liquidacion_jetsmart(
     guias: pd.DataFrame,
     resumen: dict,
     parametros: dict,
+    cruce: dict | None = None,
 ) -> None:
     """Persiste la carga del export de JetSmart mas una liquidacion
     'jetsmart_liquidacion' (estacion "AR": es una liquidacion nacional).
@@ -330,8 +331,10 @@ def guardar_liquidacion_jetsmart(
     export de JetSmart tiene otras columnas (KGs, $ Prioridad, sin
     Cod.Vuelo) que no entran en esa tabla sin una migracion. En su lugar,
     detalle_totales guarda el resumen, los datos manuales usados (TC,
-    vuelos) y las guias, que es todo lo que hace falta para reconstruir el
-    detalle y el Excel desde Liquidaciones (ver obtener_detalle_totales).
+    vuelos), las guias y, si la liquidacion se armo con el cruce contra
+    Ariel, su resumen y excepciones (cruce), que es todo lo que hace falta
+    para reconstruir el detalle y el Excel desde el historial (ver
+    obtener_detalle_totales).
 
     monto_total = "Total collections to be delivered to WCS".
 
@@ -366,6 +369,7 @@ def guardar_liquidacion_jetsmart(
                 "resumen": resumen,
                 "parametros": parametros,
                 "filas_otros_meses": filas_otros_meses,
+                "cruce": cruce,
                 "guias": guias.astype(object).where(guias.notna(), None).to_dict(orient="records"),
             }
             _guardar_liquidacion(
