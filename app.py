@@ -401,6 +401,35 @@ div[data-baseweb="select"] > div {{ border-radius: 8px !important; }}
     display: none !important;
 }}
 
+/* --- Historial --- */
+/* El desplegable es la puerta de entrada: que se vea como un boton/card. */
+.st-key-zona_historial [data-testid="stExpander"] details {{
+    background: var(--hwc-card); border: 1px solid var(--hwc-border) !important;
+    border-radius: 14px; box-shadow: 0 4px 22px -10px rgba(23, 63, 89, 0.14);
+}}
+.st-key-zona_historial [data-testid="stExpander"] summary {{ padding: 0.95rem 1.2rem; }}
+.st-key-zona_historial [data-testid="stExpander"] summary p {{ font-weight: 700; color: var(--hwc-blue-text); font-size: 0.95rem; }}
+.st-key-zona_historial [data-testid="stExpander"] summary:hover p {{ color: var(--hwc-blue); }}
+.st-key-zona_historial [data-testid="stExpanderDetails"] {{ padding: 0.4rem 1.4rem 1.4rem 1.4rem; }}
+
+.hwc-kpis {{ display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 0.9rem; margin: 0.4rem 0 1.2rem 0; }}
+.hwc-kpi {{ background: #F5F8FB; border: 1px solid var(--hwc-border); border-radius: 12px; padding: 0.9rem 1.05rem; }}
+.hwc-kpi-hero {{ background: linear-gradient(135deg, var(--hwc-blue-deep) 0%, var(--hwc-blue) 100%); border: none; }}
+.hwc-kpi-label {{ font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--hwc-text-muted); }}
+.hwc-kpi-value {{ font-size: 1.45rem; font-weight: 800; color: var(--hwc-blue-text); margin-top: 0.2rem; line-height: 1.2; }}
+.hwc-kpi-value-sm {{ font-size: 1.05rem; padding-top: 0.25rem; }}
+.hwc-kpi-note {{ font-size: 0.75rem; color: var(--hwc-text-muted); margin-top: 0.25rem; }}
+.hwc-kpi-hero .hwc-kpi-label, .hwc-kpi-hero .hwc-kpi-note {{ color: rgba(255, 255, 255, 0.78); }}
+.hwc-kpi-hero .hwc-kpi-value {{ color: #fff; font-size: 1.7rem; }}
+
+.hwc-chart-title {{ font-weight: 700; color: var(--hwc-blue-text); font-size: 0.95rem; margin-bottom: 0.4rem; }}
+.hwc-chart-sub {{ font-weight: 500; color: var(--hwc-text-muted); font-size: 0.82rem; margin-left: 0.35rem; }}
+.hwc-detail-help {{ color: var(--hwc-text-muted); font-size: 0.85rem; margin: -0.15rem 0 0.6rem 0; }}
+.st-key-card_detalle[data-testid="stVerticalBlock"] {{
+    background: #FAFBFD; border: 1px solid var(--hwc-border); border-radius: 14px;
+    padding: 1.2rem 1.3rem; margin-top: 0.6rem;
+}}
+
 /* --- Footer --- */
 .hwc-footer {{
     text-align: center; color: var(--hwc-text-muted); font-size: 0.78rem;
@@ -421,6 +450,13 @@ div[data-baseweb="select"] > div {{ border-radius: 8px !important; }}
     .st-key-card_login[data-testid="stVerticalBlock"],
     .st-key-card_historial[data-testid="stVerticalBlock"] {{ padding: 1.2rem 1.15rem; }}
     .hwc-watermark {{ background-size: 320px; background-position: bottom -30px right -30px; }}
+    .st-key-zona_historial [data-testid="stExpanderDetails"] {{ padding: 0.3rem 0.8rem 1rem 0.8rem; }}
+    .st-key-card_detalle[data-testid="stVerticalBlock"] {{ padding: 0.9rem 0.9rem; }}
+}}
+/* Tablet y mobile: los indicadores pasan a 2 columnas (el total, completo arriba). */
+@media (max-width: 900px) {{
+    .hwc-kpis {{ grid-template-columns: 1fr 1fr; }}
+    .hwc-kpi-hero, .hwc-kpi:last-child {{ grid-column: 1 / -1; }}
 }}
 </style>
 <div class="hwc-watermark"></div>
@@ -491,39 +527,90 @@ def _sheets_for_charge_type(sheets: dict, charge_type_key: str) -> dict:
     return {name: sheets[name]} if name in sheets else {}
 
 
+def _num(value: float, decimales: int = 2) -> str:
+    """Numero en formato argentino: 1.234.567,89. Es el mismo formato en que
+    st.dataframe muestra los numeros en un navegador en castellano, asi que
+    las cards y las tablas coinciden."""
+    texto = f"{value:,.{decimales}f}"
+    return texto.replace(",", "").replace(".", ",").replace("", ".")
+
+
 def _money(value: float) -> str:
-    return f"$ {value:,.2f}"
+    return f"$ {_num(value)}"
 
 
-def _grafico_barras(serie: pd.Series, nombre_categoria: str, color: str, orden: list[str] | None = None) -> alt.Chart:
-    """Grafico de barras del mini-dashboard del Historial, en Altair
-    directo (no st.bar_chart) para poder controlar tres cosas que
-    st.bar_chart no expone via parametros:
-    - Eje Y arrancando siempre en cero (scale zero=True explicito).
-    - Tooltip con etiquetas en español y formato de moneda, en vez de los
-      nombres de columna crudos (ej. "monto_total").
-    - Orden explicito del eje X cuando corresponde (ver "orden": la
-      evolucion por mes necesita orden cronologico, no alfabetico).
+def _money_corto(value: float) -> str:
+    """Monto abreviado para rotulos de graficos: $ 446,0 M."""
+    if abs(value) >= 1e9:
+        return f"$ {_num(value / 1e9, 1)} mil M"
+    if abs(value) >= 1e6:
+        return f"$ {_num(value / 1e6, 1)} M"
+    return f"$ {_num(value, 0)}"
+
+
+# Montos abreviados para el eje de los graficos ("$ 446,0 M"),
+# como expresion de Vega -- el formato "s" de d3 usaria "G" para miles de
+# millones, que no se lee en castellano.
+_VEGA_MONTO_CORTO = (
+    "datum.value >= 1e9 ? '$ ' + replace(format(datum.value / 1e9, '.1f'), '.', ',') + ' mil M' : "
+    "datum.value >= 1e6 ? '$ ' + replace(format(datum.value / 1e6, '.1f'), '.', ',') + ' M' : "
+    "'$ ' + replace(format(datum.value, ',.0f'), regexp(',', 'g'), '.')"
+)
+_CHART_COLOR = "#2D79AB"   # --hwc-blue: una sola serie por grafico, un solo color
+_CHART_TEXT = "#1F2933"    # --hwc-text: los valores van en color de texto, no de serie
+_CHART_MUTED = "#64748B"   # --hwc-text-muted
+_CHART_GRID = "#E8EEF3"
+
+
+def _grafico_barras(
+    serie: pd.Series, nombre_categoria: str, *, horizontal: bool, orden: list[str] | None = None,
+) -> alt.Chart:
+    """Grafico de barras del Historial (Altair directo, no st.bar_chart,
+    para controlar eje en cero, formato de moneda y orden).
+
+    Una sola serie, un solo color de marca, sin leyenda (el titulo la
+    nombra), con el valor rotulado en cada barra -- son pocas -- y tooltip
+    con el monto exacto. horizontal=True para comparar categorias (se
+    leen los nombres sin rotarlos); False para una evolucion en el tiempo.
+    orden fuerza el orden del eje de categorias (ej. cronologico).
     """
     df = serie.reset_index()
     df.columns = [nombre_categoria, "Total facturado"]
-    x_encoding = alt.X(
-        f"{nombre_categoria}:N",
-        title=None,
-        sort=orden if orden is not None else "-y",
+    # Rotulo y tooltip armados aca, con el mismo formato que el resto de la app.
+    df["rotulo"] = df["Total facturado"].map(_money_corto)
+    df["monto"] = df["Total facturado"].map(_money)
+    # Aire para el rotulo a la derecha/arriba de la barra mas larga (mas en
+    # horizontal: en mobile el ancho es chico y el rotulo no se tiene que cortar).
+    tope = float(df["Total facturado"].max() or 1) * (1.38 if horizontal else 1.22)
+    # Orden explicito: "-x" no se respeta en un grafico de dos capas.
+    sort = orden if orden is not None else df.sort_values("Total facturado", ascending=False)[nombre_categoria].tolist()
+    cat_axis = alt.Axis(title=None, domain=False, ticks=False, labelPadding=8, labelColor=_CHART_TEXT,
+                        labelFontSize=12, labelAngle=0)
+    val_axis = alt.Axis(title=None, domain=False, ticks=False, grid=True, gridColor=_CHART_GRID,
+                        labelColor=_CHART_MUTED, labelExpr=_VEGA_MONTO_CORTO, tickCount=4)
+    val_scale = alt.Scale(zero=True, domain=[0, tope])
+    if horizontal:
+        # Sin eje de valores: cada barra ya lleva su monto rotulado, y en
+        # mobile los valores del eje se pisaban entre si.
+        enc = dict(y=alt.Y(f"{nombre_categoria}:N", sort=sort, axis=cat_axis),
+                   x=alt.X("Total facturado:Q", scale=val_scale, axis=None))
+    else:
+        enc = dict(x=alt.X(f"{nombre_categoria}:N", sort=sort, axis=cat_axis),
+                   y=alt.Y("Total facturado:Q", scale=val_scale, axis=val_axis))
+    base = alt.Chart(df).encode(
+        **enc,
+        tooltip=[
+            alt.Tooltip(f"{nombre_categoria}:N", title=nombre_categoria),
+            alt.Tooltip("monto:N", title="Total facturado"),
+        ],
     )
-    return (
-        alt.Chart(df)
-        .mark_bar(color=color)
-        .encode(
-            x=x_encoding,
-            y=alt.Y("Total facturado:Q", title=None, scale=alt.Scale(zero=True)),
-            tooltip=[
-                alt.Tooltip(f"{nombre_categoria}:N", title=nombre_categoria),
-                alt.Tooltip("Total facturado:Q", title="Total facturado", format="$,.2f"),
-            ],
-        )
-    )
+    barras = base.mark_bar(color=_CHART_COLOR, cornerRadiusEnd=4, size=26 if horizontal else 44)
+    rotulos = base.mark_text(
+        color=_CHART_TEXT, fontSize=12, fontWeight=600,
+        **({"align": "left", "dx": 6} if horizontal else {"baseline": "bottom", "dy": -6}),
+    ).encode(text="rotulo:N")
+    alto = max(150, 48 * len(df)) if horizontal else 240
+    return (barras + rotulos).properties(height=alto).configure_view(strokeWidth=0)
 
 
 def _obtener_detalle_liquidacion(fila) -> tuple[pd.DataFrame, dict | None, str | None] | None:
@@ -745,7 +832,7 @@ def _jetsmart_resumen_html(resumen: dict) -> str:
         + row("Ventas Netas", resumen["ventas_netas"], bold=True, dot="Σ")
         + row("Comisiones por ventas — domésticas (7,5%)", resumen["comision_domestica"])
         + row("Comisiones por ventas — internacionales", resumen["comision_inter"])
-        + row(f"GHA Services ({resumen['kg_total']:,.2f} kg)", resumen["gha_services"])
+        + row(f"GHA Services ({_num(resumen['kg_total'])} kg)", resumen["gha_services"])
         + row("IVA de servicios y comisiones", resumen["iva_servicios"])
         + row("IIBB", resumen["iibb"])
         + row("Total a entregar a WCS", resumen["total_wcs"], bold=True, style=separador)
@@ -889,7 +976,7 @@ def _render_jetsmart_result(
     vuelos_txt = ", ".join(f"{station} {n}" for station, n in vuelos_inter.items())
     st.caption(
         f"Período detectado: {period_label(period)} · {len(guias)} guías · "
-        f"TC {tipo_cambio:,.2f} y vuelos internacionales ({vuelos_txt}) cargados a mano."
+        f"TC {_num(tipo_cambio)} y vuelos internacionales ({vuelos_txt}) cargados a mano."
     )
     _jetsmart_avisos(resumen)
     _render_cruce(cruce, key="resultado_cruce")
@@ -1124,104 +1211,113 @@ with st.container(key="zona_carga"):
 # dashboard historico; se despliega solo si se quiere consultar algo.
 # ---------------------------------------------------------------------------
 with st.container(key="zona_historial"):
-    st.markdown('<div class="hwc-section-title">📊 Historial de Liquidaciones</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hwc-section-title">Historial de Liquidaciones</div>', unsafe_allow_html=True)
     st.markdown(
         '<p class="hwc-section-sub">Consulta de solo lectura sobre lo ya generado y guardado — no vuelve a calcular nada.</p>',
         unsafe_allow_html=True,
     )
 
-    with st.expander("Ver historial (filtros, gráficos y detalle de cada liquidación)", expanded=False, key="expander_historial"):
-        with st.container(border=True, key="card_historial"):
+    # La etiqueta del desplegable resume que hay adentro, para que invite a
+    # abrirlo. Misma consulta fail-soft de siempre (None = base caida).
+    historial_todo = obtener_historial()
+    if historial_todo is None:
+        etiqueta_historial = "Ver historial — no disponible ahora (sin conexión a la base de datos)"
+    elif historial_todo.empty:
+        etiqueta_historial = "Ver historial — todavía no hay liquidaciones guardadas"
+    else:
+        n_vig = int(historial_todo["es_vigente"].sum())
+        ultima = historial_todo["generado_en"].max().strftime("%d/%m/%Y")
+        etiqueta_historial = (
+            f"Ver historial — {n_vig} liquidaci{'ón vigente' if n_vig == 1 else 'ones vigentes'}"
+            f" · última el {ultima}"
+        )
 
-            filtros = obtener_filtros_historial()
+    with st.expander(etiqueta_historial, expanded=False, key="expander_historial", icon=":material/history:"):
+        filtros = obtener_filtros_historial()
 
-            if filtros is None:
-                st.info(
-                    "El historial no está disponible en este momento (sin conexión a la base de datos). "
-                    "Podés seguir generando y descargando reportes con normalidad desde \"Cargar archivo nuevo\".",
-                    icon="🗄️",
-                )
-            elif not filtros["aerolineas"]:
-                st.info("Todavía no hay ningún reporte generado guardado en el historial.", icon="🗄️")
+        if filtros is None:
+            st.info(
+                "El historial no está disponible en este momento (sin conexión a la base de datos). "
+                "Podés seguir generando y descargando reportes con normalidad desde \"Cargar archivo nuevo\".",
+                icon=":material/cloud_off:",
+            )
+        elif not filtros["aerolineas"]:
+            st.info("Todavía no hay ningún reporte generado guardado en el historial.", icon=":material/inbox:")
+        else:
+            col_aerolinea, col_periodo, col_estacion, col_anteriores = st.columns([1, 1, 1, 0.9], vertical_alignment="bottom")
+            with col_aerolinea:
+                aerolinea_opciones = {"Todas": None} | {_airline_name(a): a for a in filtros["aerolineas"]}
+                aerolinea_sel = st.selectbox("Aerolínea", list(aerolinea_opciones), key="hist_aerolinea")
+            with col_periodo:
+                periodo_opciones = {"Todos": None}
+                for periodo_fecha, mes, anio in filtros["periodos"]:
+                    periodo_opciones[period_label((mes, anio))] = periodo_fecha
+                periodo_sel_label = st.selectbox("Período", list(periodo_opciones.keys()), key="hist_periodo")
+            with col_estacion:
+                estacion_opciones = ["Todas"] + filtros["estaciones"]
+                estacion_sel = st.selectbox("Estación", estacion_opciones, key="hist_estacion")
+            with col_anteriores:
+                ver_anteriores = st.toggle("Mostrar generaciones anteriores", value=False, key="hist_anteriores")
+
+            aerolinea_filtro = aerolinea_opciones[aerolinea_sel]
+            periodo_filtro = periodo_opciones[periodo_sel_label]
+            estacion_filtro = None if estacion_sel == "Todas" else estacion_sel
+
+            historial_df = obtener_historial(aerolinea_filtro, periodo_filtro, estacion_filtro)
+
+            if historial_df is None:
+                st.warning("No se pudo consultar el historial ahora mismo. Probá de nuevo en unos minutos.", icon=":material/cloud_off:")
+            elif historial_df.empty:
+                st.info("No hay liquidaciones para los filtros seleccionados.", icon=":material/search_off:")
             else:
-                col_aerolinea, col_periodo, col_estacion = st.columns(3)
-                with col_aerolinea:
-                    aerolinea_opciones = ["Todas"] + [a.upper() for a in filtros["aerolineas"]]
-                    aerolinea_sel = st.selectbox("Aerolínea", aerolinea_opciones, key="hist_aerolinea")
-                with col_periodo:
-                    periodo_opciones = {"Todos": None}
-                    for periodo_fecha, mes, anio in filtros["periodos"]:
-                        periodo_opciones[period_label((mes, anio))] = periodo_fecha
-                    periodo_sel_label = st.selectbox("Período", list(periodo_opciones.keys()), key="hist_periodo")
-                with col_estacion:
-                    estacion_opciones = ["Todas"] + filtros["estaciones"]
-                    estacion_sel = st.selectbox("Estación", estacion_opciones, key="hist_estacion")
+                # El total SOLO suma la generacion mas reciente de cada
+                # combinacion (aerolinea/estacion/tipo_cargo/periodo) --
+                # es_vigente lo calcula obtener_historial() con ROW_NUMBER().
+                # Si algo se regenero, las anteriores se pueden ver en la
+                # tabla (toggle) para trazabilidad, pero nunca suman: el
+                # numero grande no debe duplicar plata.
+                vigentes = historial_df[historial_df["es_vigente"]]
+                total = float(vigentes["monto_total"].fillna(0).sum())
+                cantidad_vigente = len(vigentes)
+                cantidad_anteriores = len(historial_df) - cantidad_vigente
+                ultima_fecha = historial_df["generado_en"].max().strftime("%d/%m/%Y %H:%M")
 
-                aerolinea_filtro = None if aerolinea_sel == "Todas" else aerolinea_sel.lower()
-                periodo_filtro = periodo_opciones[periodo_sel_label]
-                estacion_filtro = None if estacion_sel == "Todas" else estacion_sel
+                st.markdown(
+                    '<div class="hwc-kpis">'
+                    f'<div class="hwc-kpi hwc-kpi-hero"><div class="hwc-kpi-label">Total vigente</div>'
+                    f'<div class="hwc-kpi-value">{_money(total)}</div>'
+                    f'<div class="hwc-kpi-note">Suma de la última generación de cada liquidación</div></div>'
+                    f'<div class="hwc-kpi"><div class="hwc-kpi-label">Liquidaciones vigentes</div>'
+                    f'<div class="hwc-kpi-value">{cantidad_vigente}</div>'
+                    f'<div class="hwc-kpi-note">{cantidad_anteriores} generaci{"ón anterior" if cantidad_anteriores == 1 else "ones anteriores"} (no suman)</div></div>'
+                    f'<div class="hwc-kpi"><div class="hwc-kpi-label">Aerolíneas</div>'
+                    f'<div class="hwc-kpi-value">{vigentes["aerolinea"].nunique()}</div>'
+                    f'<div class="hwc-kpi-note">con liquidaciones en este filtro</div></div>'
+                    f'<div class="hwc-kpi"><div class="hwc-kpi-label">Último procesamiento</div>'
+                    f'<div class="hwc-kpi-value hwc-kpi-value-sm">{ultima_fecha}</div>'
+                    f'<div class="hwc-kpi-note">hora UTC</div></div>'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
 
-                historial_df = obtener_historial(aerolinea_filtro, periodo_filtro, estacion_filtro)
-
-                if historial_df is None:
-                    st.warning("No se pudo consultar el historial ahora mismo. Probá de nuevo en unos minutos.", icon="⚠️")
-                elif historial_df.empty:
-                    st.info("No hay liquidaciones para los filtros seleccionados.", icon="🔍")
-                else:
-                    # El total SOLO suma la generacion mas reciente de cada
-                    # combinacion (aerolinea/estacion/tipo_cargo/periodo) --
-                    # es_vigente lo calcula obtener_historial() con ROW_NUMBER().
-                    # Si algo se regenero, la tabla de abajo sigue mostrando
-                    # todas las corridas para trazabilidad, pero el numero
-                    # grande no debe duplicar plata.
-                    vigentes = historial_df[historial_df["es_vigente"]]
-                    total = float(vigentes["monto_total"].fillna(0).sum())
-                    cantidad_vigente = len(vigentes)
-                    cantidad_total = len(historial_df)
-
-                    st.markdown(
-                        f'<div class="hwc-group-card">'
-                        f'<div class="hwc-group-title">Σ Total filtrado</div>'
-                        f'<div class="hwc-row hwc-row-active"><span class="hwc-dot hwc-dot-active">✓</span>'
-                        f'{cantidad_vigente} liquidaci{"ón" if cantidad_vigente == 1 else "ones"} vigente{"" if cantidad_vigente == 1 else "s"}'
-                        f'<span class="hwc-count">{_money(total)}</span></div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
-                    if cantidad_total > cantidad_vigente:
-                        st.caption(
-                            f"ℹ️ Hay {cantidad_total - cantidad_vigente} generación(es) anterior(es) para "
-                            "alguna combinación aerolínea/estación/tipo de cargo/período — el total de "
-                            "arriba usa solo la más reciente de cada una. Las anteriores siguen abajo, "
-                            "marcadas como \"Anterior\", solo para trazabilidad."
-                        )
-
-                    # ---------------------------------------------------------
-                    # Dos graficos simples, nativos de Streamlit (sin libs
-                    # nuevas). Ambos usan SOLO montos vigentes (misma logica
-                    # que el total de arriba) para no duplicar plata.
-                    # ---------------------------------------------------------
-                    col_chart1, col_chart2 = st.columns(2)
-                    with col_chart1:
-                        st.markdown(
-                            '<div class="hwc-group-title">📊 Total facturado por aerolínea</div>',
-                            unsafe_allow_html=True,
-                        )
+                # ---------------------------------------------------------
+                # Dos graficos, ambos SOLO con montos vigentes (misma
+                # logica que el total de arriba) para no duplicar plata.
+                # ---------------------------------------------------------
+                col_chart1, col_chart2 = st.columns(2, gap="large")
+                with col_chart1:
+                    with st.container(key="card_chart_aerolinea"):
+                        st.markdown('<div class="hwc-chart-title">Total facturado por aerolínea</div>', unsafe_allow_html=True)
                         por_aerolinea = (
-                            vigentes.assign(_aerolinea=vigentes["aerolinea"].str.upper())
+                            vigentes.assign(_aerolinea=vigentes["aerolinea"].map(_airline_name))
                             .groupby("_aerolinea")["monto_total"]
                             .sum()
                         )
-                        st.altair_chart(
-                            _grafico_barras(por_aerolinea, "Aerolínea", "#2D79AB"),
-                            use_container_width=True,
-                        )
+                        st.altair_chart(_grafico_barras(por_aerolinea, "Aerolínea", horizontal=True), use_container_width=True)
 
-                    with col_chart2:
-                        st.markdown(
-                            '<div class="hwc-group-title">📈 Evolución por mes</div>',
-                            unsafe_allow_html=True,
-                        )
+                with col_chart2:
+                    with st.container(key="card_chart_mes"):
+                        st.markdown('<div class="hwc-chart-title">Evolución por mes</div>', unsafe_allow_html=True)
                         # A proposito ignora el filtro de periodo (pasa None):
                         # el punto de este grafico es mostrar varios meses a la
                         # vez, asi que no tiene sentido dejar que el propio
@@ -1241,67 +1337,78 @@ with st.container(key="zona_historial"):
                                 .groupby("_periodo_label", sort=False)["monto_total"]
                                 .sum()
                             )
-                            # El orden cronologico (no alfabetico -- "julio"
-                            # quedaria antes que "mayo") se fuerza pasando la
-                            # lista de categorias ya ordenada como "sort" del
-                            # eje X de Altair, en vez de alfabetico por
-                            # defecto.
+                            # Orden cronologico (no alfabetico -- "julio"
+                            # quedaria antes que "mayo"): se pasa la lista ya
+                            # ordenada como "sort" del eje de Altair.
                             st.altair_chart(
-                                _grafico_barras(por_mes, "Período", "#3895D1", orden=list(por_mes.index)),
+                                _grafico_barras(por_mes, "Período", horizontal=False, orden=list(por_mes.index)),
                                 use_container_width=True,
                             )
                             if len(por_mes) == 1:
-                                st.caption("Todavía hay un solo período cargado — este gráfico va a sumar meses a medida que se generen más reportes.")
+                                st.caption("Todavía hay un solo período cargado — el gráfico va a sumar meses a medida que se generen más reportes.")
 
-                    tabla = pd.DataFrame({
-                        "Vigencia": historial_df["es_vigente"].map(lambda v: "✓ Vigente" if v else "— Anterior"),
-                        "Fecha de generación": historial_df["generado_en"].dt.strftime("%d/%m/%Y %H:%M") + " UTC",
-                        "Aerolínea": historial_df["aerolinea"].str.upper(),
-                        "Estación": historial_df["estacion"],
-                        "Tipo de cargo": historial_df["tipo_cargo"].map(
-                            lambda t: CHARGE_TYPE_LABELS.get(t, ("", t))[1]
-                        ),
-                        "Período": [
-                            period_label((mes, anio))
-                            for mes, anio in zip(historial_df["periodo_mes"], historial_df["periodo_anio"])
-                        ],
-                        "Movimientos": historial_df["cantidad_filas"],
-                        "Monto total": historial_df["monto_total"].fillna(0).map(_money),
-                    })
-                    st.dataframe(tabla, use_container_width=True, hide_index=True)
+                # Tabla: por defecto solo lo vigente (lo que suma); las
+                # generaciones anteriores quedan a un toggle de distancia.
+                vista_df = (historial_df if ver_anteriores else vigentes).reset_index(drop=True)
+                st.markdown(
+                    f'<div class="hwc-chart-title" style="margin-top:0.4rem;">Liquidaciones '
+                    f'<span class="hwc-chart-sub">{len(vista_df)} '
+                    f'{"en total, incluidas las anteriores" if ver_anteriores else "vigentes"}</span></div>',
+                    unsafe_allow_html=True,
+                )
+                tabla = pd.DataFrame({
+                    "Estado": vista_df["es_vigente"].map(lambda v: "✓ Vigente" if v else "Anterior"),
+                    "Generada (UTC)": vista_df["generado_en"].dt.strftime("%d/%m/%Y %H:%M"),
+                    "Aerolínea": vista_df["aerolinea"].map(_airline_name),
+                    "Estación": vista_df["estacion"],
+                    "Tipo de cargo": vista_df["tipo_cargo"].map(lambda t: CHARGE_TYPE_LABELS.get(t, ("", t))[1]),
+                    "Período": [
+                        period_label((mes, anio)) for mes, anio in zip(vista_df["periodo_mes"], vista_df["periodo_anio"])
+                    ],
+                    "Movimientos": vista_df["cantidad_filas"],
+                    "Monto total": vista_df["monto_total"].fillna(0),
+                })
+                st.dataframe(
+                    tabla, use_container_width=True, hide_index=True,
+                    height=min(420, 35 * (len(tabla) + 1) + 3),
+                    column_config={
+                        "Movimientos": st.column_config.NumberColumn(format="localized"),
+                        "Monto total": st.column_config.NumberColumn(format="dollar"),
+                    },
+                )
 
-                    # ---------------------------------------------------------
-                    # Detalle linea por linea de UNA liquidacion puntual. El
-                    # combo de abajo referencia filas de historial_df por
-                    # posicion (indice 0..N-1), no por un id propio -- alcanza
-                    # porque se reconstruye en cada rerun a partir del mismo
-                    # query, en el mismo orden.
-                    # ---------------------------------------------------------
+                # ---------------------------------------------------------
+                # Detalle linea por linea de UNA liquidacion puntual. El
+                # combo referencia filas de vista_df (lo que se ve en la
+                # tabla) por posicion -- alcanza porque se reconstruye en
+                # cada rerun a partir del mismo query, en el mismo orden.
+                # ---------------------------------------------------------
+                with st.container(border=True, key="card_detalle"):
                     st.markdown(
-                        '<div class="hwc-step" style="margin-top:1.4rem;">'
-                        '<span class="hwc-step-num">🔎</span>Ver detalle de una liquidación</div>',
+                        '<div class="hwc-chart-title">Detalle de una liquidación</div>'
+                        '<p class="hwc-detail-help">Elegí una de la tabla para ver su detalle línea por línea y descargar su Excel.</p>',
                         unsafe_allow_html=True,
                     )
 
                     def _etiqueta_detalle(i: int) -> str:
-                        fila = historial_df.iloc[i]
+                        fila = vista_df.iloc[i]
                         tipo_label = CHARGE_TYPE_LABELS.get(fila["tipo_cargo"], ("", fila["tipo_cargo"]))[1]
                         periodo_txt = period_label((fila["periodo_mes"], fila["periodo_anio"]))
                         fecha_txt = fila["generado_en"].strftime("%d/%m/%Y %H:%M UTC")
-                        vigencia_txt = "vigente" if fila["es_vigente"] else "anterior"
+                        vigencia_txt = "" if fila["es_vigente"] else " (anterior)"
                         return (
-                            f"{fila['aerolinea'].upper()} · {fila['estacion']} · {tipo_label} · "
-                            f"{periodo_txt} · {fecha_txt} ({vigencia_txt})"
+                            f"{_airline_name(fila['aerolinea'])} · {fila['estacion']} · {tipo_label} · "
+                            f"{periodo_txt} · {fecha_txt}{vigencia_txt}"
                         )
 
                     seleccion = st.selectbox(
                         "Elegí una liquidación para ver su detalle línea por línea",
-                        options=range(len(historial_df)),
+                        options=range(len(vista_df)),
                         format_func=_etiqueta_detalle,
                         label_visibility="collapsed",
                         key="hist_detalle_selector",
                     )
-                    fila_sel = historial_df.iloc[seleccion]
+                    fila_sel = vista_df.iloc[seleccion]
 
                     if fila_sel["cantidad_filas"] == 0:
                         st.info("Esta liquidación no tiene movimientos asociados (sin movimiento).", icon="🔍")
@@ -1323,7 +1430,7 @@ with st.container(key="zona_historial"):
                                     _render_cruce(cruce_guardado, key="hist_cruce")
                                 st.markdown(_jetsmart_resumen_html(resumen), unsafe_allow_html=True)
                                 st.caption(
-                                    f"{len(detalle_df)} guías (hoja \"GUIAS\") — TC {resumen['tipo_cambio']:,.2f}. "
+                                    f"{len(detalle_df)} guías (hoja \"GUIAS\") — TC {_num(resumen['tipo_cambio'])}. "
                                     "Mismo cálculo que el Excel real de esta liquidación (jetsmart_builder.py)."
                                 )
                             elif resumen is not None:
@@ -1393,13 +1500,14 @@ with st.container(key="zona_historial"):
                             detalle_buffer.seek(0)
 
                             periodo_slug = period_slug((fila_sel["periodo_mes"], fila_sel["periodo_anio"]))
-                            st.caption("Descarga opcional — la liquidación ya quedó guardada.")
                             st.download_button(
-                                label="⬇️ Descargar Excel",
+                                label="Descargar Excel de esta liquidación",
+                                icon=":material/download:",
                                 data=detalle_buffer,
                                 file_name=f"{fila_sel['aerolinea']}_{fila_sel['estacion']}_{periodo_slug}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 type="secondary",
+                                on_click="ignore",
                                 key="hist_detalle_download",
                             )
 
@@ -1409,7 +1517,13 @@ with st.container(key="zona_historial"):
                             # se topea en 420px y scrollea adentro del recuadro
                             # en vez de estirar la pagina entera.
                             alto_tabla = min(420, 38 * (len(detalle_df) + 1) + 4)
-                            st.dataframe(detalle_df, use_container_width=True, hide_index=True, height=alto_tabla)
+                            st.dataframe(
+                                detalle_df, use_container_width=True, hide_index=True, height=alto_tabla,
+                                column_config={
+                                    col: st.column_config.NumberColumn(format="localized")
+                                    for col in detalle_df.columns if pd.api.types.is_float_dtype(detalle_df[col])
+                                },
+                            )
 
 
 st.markdown('<div class="hwc-footer">Handyway Cargo · Automatización de reportes</div>', unsafe_allow_html=True)
