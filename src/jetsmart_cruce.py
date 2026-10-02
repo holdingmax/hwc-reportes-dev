@@ -32,6 +32,7 @@ mano): esas aparecen aca como diferencia marcada, no como error silencioso.
 """
 
 import calendar
+import unicodedata
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -59,6 +60,18 @@ COL_AR_DESTINO = "Destino"
 COL_AR_KG = "Kg"
 COL_AR_INGRESO = "Ingreso total flete"
 _AR_REQUIRED = [COL_AR_GUIA, COL_AR_FECHA, COL_AR_ORIGEN, COL_AR_KG, COL_AR_INGRESO]
+
+# Columnas de la tabla de Ariel, tal como las trae la hoja "Venta" de su
+# rendicion mensual y la hoja "ARIEL" del archivo de trabajo (son las mismas;
+# "Prefihjo" asi, con el typo del original).
+_AR_COLUMNS = [
+    "Prefihjo", COL_AR_AWB, COL_AR_GUIA, COL_AR_FECHA, "Nro de vuelo embarcada", COL_AR_CLIENTE,
+    "Destinatario", COL_AR_ORIGEN, COL_AR_DESTINO, "Bultos", COL_AR_KG, "Kg comercial",
+    "Tarifa por kg", COL_AR_INGRESO, "Descripción de la mercadería",
+]
+# Hasta que fila se busca el encabezado de la tabla en la hoja "Venta": el
+# archivo de Ariel trae 1 o 2 filas en blanco arriba (varia mes a mes).
+_RAW_HEADER_MAX_ROW = 20
 
 _MES_ABREV = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
 
@@ -88,6 +101,42 @@ def _find_sheet(xls: pd.ExcelFile, name: str) -> str | None:
     return next((s for s in xls.sheet_names if s.strip().upper() == name), None)
 
 
+def _norm(texto) -> str:
+    """Normaliza un encabezado para compararlo: minusculas, sin tildes, sin
+    espacios de mas ("Nro de Guía " -> "nro de guia")."""
+    texto = unicodedata.normalize("NFKD", str(texto)).encode("ascii", "ignore").decode("ascii")
+    return " ".join(texto.lower().split())
+
+
+_AR_COLUMNS_NORM = {_norm(c): c for c in _AR_COLUMNS}
+
+
+def _es_fila_encabezado(valores) -> bool:
+    normalizados = {_norm(v) for v in valores if pd.notna(v)}
+    return _norm(COL_AR_GUIA) in normalizados and bool(normalizados & {"prefihjo", "prefijo"})
+
+
+def _limpiar_ariel(df: pd.DataFrame, origen: str) -> tuple[pd.DataFrame, int]:
+    """Limpieza comun a la hoja ARIEL (archivo de trabajo) y a la hoja Venta
+    (rendicion cruda de Ariel). Descarta: filas sin numero de guia numerico
+    (pie de totales, filas vacias) y guias anuladas.
+
+    origen: nombre de la hoja, para el mensaje de error.
+    """
+    faltantes = [c for c in _AR_REQUIRED if c not in df.columns]
+    if faltantes:
+        raise ValueError(f"La hoja {origen} no tiene las columnas esperadas: faltan " + ", ".join(faltantes))
+
+    anulada = df.astype(str).apply(lambda col: col.str.strip().str.upper().eq("ANULADA")).any(axis=1)
+    nro = pd.to_numeric(df[COL_AR_GUIA], errors="coerce")
+    n_anuladas = int(anulada.sum())
+    df = df[nro.notna() & ~anulada].copy()
+    df[COL_AR_GUIA] = df[COL_AR_GUIA].astype("int64")
+    df[COL_AR_FECHA] = pd.to_datetime(df[COL_AR_FECHA], errors="coerce")
+    df[COL_AR_ORIGEN] = df[COL_AR_ORIGEN].astype(str).str.strip().str.upper()
+    return df.reset_index(drop=True), n_anuladas
+
+
 def has_ariel_sheet(source) -> bool:
     _rewind(source)
     with pd.ExcelFile(source) as xls:
@@ -106,18 +155,57 @@ def load_ariel(source) -> tuple[pd.DataFrame, int]:
         if sheet is None:
             raise ValueError("El archivo no tiene la hoja ARIEL (el archivo de Ariel del mes, tal como lo arma Anita).")
         df = pd.read_excel(xls, sheet_name=sheet)
-    faltantes = [c for c in _AR_REQUIRED if c not in df.columns]
-    if faltantes:
-        raise ValueError("La hoja ARIEL no tiene las columnas esperadas: faltan " + ", ".join(faltantes))
+    return _limpiar_ariel(df, "ARIEL")
 
-    anulada = df.astype(str).apply(lambda col: col.str.strip().str.upper().eq("ANULADA")).any(axis=1)
-    nro = pd.to_numeric(df[COL_AR_GUIA], errors="coerce")
-    n_anuladas = int(anulada.sum())
-    df = df[nro.notna() & ~anulada].copy()
-    df[COL_AR_GUIA] = df[COL_AR_GUIA].astype("int64")
-    df[COL_AR_FECHA] = pd.to_datetime(df[COL_AR_FECHA], errors="coerce")
-    df[COL_AR_ORIGEN] = df[COL_AR_ORIGEN].astype(str).str.strip().str.upper()
-    return df.reset_index(drop=True), n_anuladas
+
+def _leer_venta(source) -> pd.DataFrame:
+    """Tabla de la hoja "Venta" de la rendicion cruda de Ariel, con los
+    encabezados de la tabla como columnas. Lanza ValueError si no esta la
+    hoja o no aparece el encabezado en las primeras filas."""
+    _rewind(source)
+    with pd.ExcelFile(source) as xls:
+        sheet = _find_sheet(xls, "VENTA")
+        if sheet is None:
+            raise ValueError(
+                "El archivo no tiene la hoja Venta (la rendición que manda Ariel, con la tabla de guías "
+                "declaradas). Hojas encontradas: " + ", ".join(xls.sheet_names)
+            )
+        crudo = pd.read_excel(xls, sheet_name=sheet, header=None)
+    # El offset de filas en blanco varia mes a mes: se busca la fila del
+    # encabezado ("Prefihjo" + "Nro de guía") en vez de asumir una fija.
+    fila = next(
+        (i for i in range(min(_RAW_HEADER_MAX_ROW, len(crudo))) if _es_fila_encabezado(crudo.iloc[i])),
+        None,
+    )
+    if fila is None:
+        raise ValueError(
+            f"La hoja {sheet} no tiene el encabezado esperado (Prefihjo, Nro de guía, ...) en sus primeras "
+            f"{_RAW_HEADER_MAX_ROW} filas: no parece la tabla de guías de Ariel."
+        )
+    encabezado = crudo.iloc[fila]
+    columnas = [_AR_COLUMNS_NORM.get(_norm(v), str(v).strip()) if pd.notna(v) else None for v in encabezado]
+    df = crudo.iloc[fila + 1:].copy()
+    df.columns = columnas
+    # Columnas sin encabezado (ej. la tabla arranca en la columna B): afuera.
+    return df.loc[:, [c is not None for c in columnas]].reset_index(drop=True)
+
+
+def has_ariel_raw_file(source) -> bool:
+    """True si el archivo parece la rendicion cruda de Ariel (hoja Venta con
+    la tabla de guias). No lanza excepciones: es para habilitar la carga."""
+    try:
+        _leer_venta(source)
+        return True
+    except Exception:
+        return False
+
+
+def load_ariel_raw(source) -> tuple[pd.DataFrame, int]:
+    """Igual que load_ariel, pero leyendo el archivo CRUDO que manda Ariel
+    (hoja "Venta", sin importar mayusculas) en vez de la hoja ARIEL del
+    archivo de trabajo. Las demas hojas (manifiestos) se ignoran. Devuelve
+    el mismo formato: (guias validas, cantidad de anuladas descartadas)."""
+    return _limpiar_ariel(_leer_venta(source), "Venta")
 
 
 def _guias_set(export: pd.DataFrame | None) -> set[int]:

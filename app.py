@@ -66,7 +66,14 @@ from src.liquidacion_builder import (
     detect_unconfirmed_station_activity,
     write_liquidacion,
 )
-from src.jetsmart_cruce import EXC_DIFERENCIA, cruzar_jetsmart, has_ariel_sheet, load_ariel
+from src.jetsmart_cruce import (
+    EXC_DIFERENCIA,
+    cruzar_jetsmart,
+    has_ariel_raw_file,
+    has_ariel_sheet,
+    load_ariel,
+    load_ariel_raw,
+)
 from src.jetsmart_builder import (
     build_jetsmart_guias,
     build_jetsmart_resumen,
@@ -731,7 +738,8 @@ def _archivo_hint(airline_key: str | None) -> str:
     if AIRLINE_CONFIGS[airline_key].get("flow") == FLOW_JETSMART:
         return (
             "El <b>archivo de trabajo del mes</b> (LIQUIDACION ECS): la hoja BD con el export de guías "
-            "primero y la hoja ARIEL con el archivo de Ariel."
+            "primero y la hoja ARIEL con el archivo de Ariel. Si todavía no armaste la hoja ARIEL, subilo "
+            "igual: te va a pedir la rendición original de Ariel."
         )
     return "El <b>export del sistema</b> (archivo original.xlsx), tal como sale, sin editar."
 
@@ -1008,19 +1016,24 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
 
 def _render_jetsmart_result(
     uploaded_file, tipo_cambio: float, vuelos_inter: dict[str, int], archivo_anterior, export_siguiente_file,
+    ariel_mes_crudo=None, ariel_anterior_crudo=None,
 ) -> tuple[object, tuple[str, str]]:
     """Corre el cruce con Ariel + la liquidacion de JetSmart y muestra el resultado.
 
     uploaded_file / archivo_anterior: archivos de trabajo de Anita (hoja BD
     primero + hoja ARIEL) del mes y del mes anterior. export_siguiente_file:
-    export de guias del mes siguiente, opcional.
+    export de guias del mes siguiente, opcional. ariel_mes_crudo /
+    ariel_anterior_crudo: la rendicion original de Ariel (hoja Venta), solo
+    cuando el archivo de trabajo correspondiente no trae la hoja ARIEL.
     """
     with st.spinner("Cruzando con Ariel y generando liquidación..."):
         export = load_jetsmart_export(uploaded_file)
         period, otros_meses = detect_jetsmart_period(export)
-        ariel, _ = load_ariel(uploaded_file)
+        ariel, _ = load_ariel_raw(ariel_mes_crudo) if ariel_mes_crudo is not None else load_ariel(uploaded_file)
         export_anterior = load_jetsmart_export(archivo_anterior)
-        ariel_anterior, _ = load_ariel(archivo_anterior)
+        ariel_anterior, _ = (
+            load_ariel_raw(ariel_anterior_crudo) if ariel_anterior_crudo is not None else load_ariel(archivo_anterior)
+        )
         export_siguiente = load_jetsmart_export(export_siguiente_file) if export_siguiente_file is not None else None
         resultado = cruzar_jetsmart(export, ariel, period, export_anterior, ariel_anterior, export_siguiente)
 
@@ -1142,13 +1155,30 @@ with st.container(key="zona_carga"):
         uploaded_file = st.file_uploader("Archivo del mes", type="xlsx", key="archivo_mes", label_visibility="collapsed")
 
         # JetSmart necesita ademas el archivo de trabajo del mes anterior
-        # (cruce con Ariel) y, opcional, el export del mes siguiente.
+        # (cruce con Ariel) y, opcional, el export del mes siguiente. Si un
+        # archivo de trabajo no trae la hoja ARIEL armada, se puede subir al
+        # lado la rendicion original de Ariel (hoja Venta) y se lee de ahi
+        # (load_ariel_raw); si la trae, todo sigue igual que siempre.
         archivo_anterior = export_siguiente_file = None
+        ariel_mes_crudo = ariel_anterior_crudo = None
+        mes_sin_ariel = es_jetsmart_sel and uploaded_file is not None and not has_ariel_sheet(uploaded_file)
+        if mes_sin_ariel:
+            ariel_mes_crudo = st.file_uploader(
+                "Archivo de Ariel del mes (el original, tal como te lo manda él) — el archivo del mes no trae la hoja ARIEL",
+                type="xlsx", key="js_ariel_mes",
+            )
         if es_jetsmart_sel:
             archivo_anterior = st.file_uploader(
                 "Archivo de trabajo del mes anterior (LIQUIDACION ECS, con hojas BD y ARIEL)",
                 type="xlsx", key="js_anterior",
             )
+            anterior_sin_ariel = archivo_anterior is not None and not has_ariel_sheet(archivo_anterior)
+            if anterior_sin_ariel:
+                ariel_anterior_crudo = st.file_uploader(
+                    "Archivo de Ariel del mes anterior (el original, tal como te lo manda él) — "
+                    "el archivo del mes anterior no trae la hoja ARIEL",
+                    type="xlsx", key="js_ariel_anterior",
+                )
             export_siguiente_file = st.file_uploader(
                 "Export de guías del mes siguiente (opcional: confirma las guías del último día del mes)",
                 type="xlsx", key="js_siguiente",
@@ -1171,13 +1201,19 @@ with st.container(key="zona_carga"):
                     ))
 
     requisitos = [("Elegir la aerolínea", airline_key is not None), ("Subir el archivo del mes", uploaded_file is not None)]
+    def _requisito_ariel_crudo(crudo, cual: str) -> tuple[str, bool]:
+        if crudo is None:
+            return (f"Subir el archivo de Ariel {cual} (el archivo de trabajo no trae la hoja ARIEL)", False)
+        if not has_ariel_raw_file(crudo):
+            return (f"El archivo de Ariel {cual} tiene que tener la hoja Venta con la tabla de guías", False)
+        return (f"Subir el archivo de Ariel {cual}", True)
+
     if es_jetsmart_sel:
-        if uploaded_file is not None and not has_ariel_sheet(uploaded_file):
-            requisitos[1] = ("El archivo del mes tiene que tener la hoja ARIEL (el que subiste no la tiene)", False)
-        if archivo_anterior is not None and not has_ariel_sheet(archivo_anterior):
-            requisitos.append(("El archivo del mes anterior tiene que tener la hoja ARIEL", False))
-        else:
-            requisitos.append(("Subir el archivo de trabajo del mes anterior", archivo_anterior is not None))
+        if mes_sin_ariel:
+            requisitos.append(_requisito_ariel_crudo(ariel_mes_crudo, "del mes"))
+        requisitos.append(("Subir el archivo de trabajo del mes anterior", archivo_anterior is not None))
+        if archivo_anterior is not None and anterior_sin_ariel:
+            requisitos.append(_requisito_ariel_crudo(ariel_anterior_crudo, "del mes anterior"))
         requisitos.append(("Cargar el tipo de cambio", tipo_cambio > 0))
     listo = all(ok for _, ok in requisitos)
 
@@ -1201,6 +1237,7 @@ with st.container(key="zona_carga"):
                 if airline_cfg.get("flow") == FLOW_JETSMART:
                     buffer, period = _render_jetsmart_result(
                         uploaded_file, tipo_cambio, vuelos_inter, archivo_anterior, export_siguiente_file,
+                        ariel_mes_crudo, ariel_anterior_crudo,
                     )
                 elif airline_cfg.get("flow") == FLOW_LIQUIDACION:
                     buffer, _, period = _render_liquidacion_result(uploaded_file)

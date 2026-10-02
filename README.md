@@ -98,7 +98,11 @@ cargan al generar la liquidación, en la app o por CLI.
 Reemplaza la comparación manual de la hoja CONTROL. Entradas: el archivo de
 trabajo del mes (hoja BD con el export de guías primero, y hoja ARIEL), el
 archivo de trabajo del mes anterior (obligatorio) y, opcionalmente, el export
-de guías del mes siguiente. Ariel es la fuente de la liquidación: lo que entra
+de guías del mes siguiente. Si un archivo de trabajo todavía no tiene la hoja
+ARIEL armada, en la app se puede subir al lado la rendición original que manda
+Ariel: se lee su hoja "Venta" (sin importar mayúsculas y detectando las filas
+en blanco de arriba), con la misma limpieza que la hoja ARIEL
+(`load_ariel_raw`). Ariel es la fuente de la liquidación: lo que entra
 se liquida con los Kg, el ingreso y el origen de Ariel.
 
 - Se descartan las guías anuladas de Ariel antes de cruzar. Ariel reusa el
@@ -130,7 +134,7 @@ Validación contra la hoja GUIAS de las liquidaciones finales de Anita
   la final: 3 que Anita agregó a mano (92364, 92378, 92409) y 6 del 01-02/06
   que quedan a revisión manual porque no hay archivos de mayo para confirmarlas.
 
-Tests: `python -m unittest tests.test_jetsmart_regresion tests.test_jetsmart_cruce -v`.
+Tests: `python -m unittest discover -s tests -t . -v`.
 Necesitan los archivos reales en `tests/fixtures/jetsmart/`, que no se
 versionan. La regresión compara celda por celda las hojas LIQUIDACION y CVLP
 contra `LIQ_ECS_07-2026_00000005.xlsx`.
