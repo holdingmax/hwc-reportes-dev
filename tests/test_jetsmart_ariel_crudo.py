@@ -17,12 +17,28 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+import openpyxl
 import pandas as pd
 from openpyxl import Workbook
 
 from src.jetsmart_builder import detect_jetsmart_period, load_jetsmart_export
+from src.config import (
+    COL_JS_CLIENTE,
+    COL_JS_CREACION,
+    COL_JS_DESTINO,
+    COL_JS_EMPRESA,
+    COL_JS_ESTADO,
+    COL_JS_GUIA,
+    COL_JS_KGS,
+    COL_JS_ORIGEN,
+    COL_JS_PRIORIDAD,
+    JETSMART_STATIONS,
+)
 from src.jetsmart_cruce import (
     _AR_COLUMNS,
+    EXC_DOBLE,
+    EXC_DUPLICADA,
+    INC_PENDIENTE_ANTERIOR,
     cruzar_jetsmart,
     has_ariel_raw_file,
     has_ariel_sheet,
@@ -32,6 +48,9 @@ from src.jetsmart_cruce import (
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "jetsmart"
 TRABAJO_JUN, TRABAJO_JUL = FIX / "LIQUIDACION_06-2026.xlsx", FIX / "LIQUIDACION_07-2026.xlsx"
+# Rendiciones reales que mando Ariel (crudas, sin tocar).
+RENDICION_AGO = FIX / "Ariel_Rendicion_agosto_2026.xlsx"
+RENDICION_SEP = FIX / "Ariel_Rendicion_septiembre_2026.xlsx"
 
 FILAS_CHICAS = [
     [827, 50200474, 94542, datetime(2026, 7, 1), 3039, "AMDM S.R.L", "JULIO BURGOA", "AEP", "BRC", 1, 8, 8, 736, 10000, "ART. CONSUMO"],
@@ -177,6 +196,115 @@ class TestEquivalenciaConHojaAriel(unittest.TestCase):
             pd.to_numeric(con_crudo.incluidas["$ Prioridad"]), pd.to_numeric(con_hoja.incluidas["$ Prioridad"]),
             check_dtype=False,
         )
+
+
+
+def _lectura_a_mano(path) -> dict:
+    """Lectura independiente de la hoja de ventas, celda por celda con
+    openpyxl (sin pasar por load_ariel_raw), para comparar contra ella."""
+    ws = openpyxl.load_workbook(path, data_only=True).worksheets[0]
+    filas = list(ws.iter_rows(values_only=True))
+    fila_hdr = next(i for i, r in enumerate(filas) if r and r[0] == "Prefihjo")
+    validas = [
+        r for r in filas[fila_hdr + 1:]
+        if isinstance(r[2], (int, float))
+        and not any(str(c).strip().upper() == "ANULADA" for c in r if c is not None)
+    ]
+    anuladas = sum(
+        any(str(c).strip().upper() == "ANULADA" for c in r if c is not None) for r in filas[fila_hdr + 1:]
+    )
+    return {
+        "hoja": ws.title, "filas_en_blanco": fila_hdr, "guias": [int(r[2]) for r in validas],
+        "anuladas": anuladas, "kg": sum(r[10] for r in validas), "ingreso": sum(r[13] for r in validas),
+        "max_columna": ws.max_column,
+    }
+
+
+def _export_vacio() -> pd.DataFrame:
+    # Sin el export de guias de agosto/septiembre (no lo tenemos): solo se
+    # validan las reglas del cruce que dependen de los archivos de Ariel.
+    return pd.DataFrame(columns=[
+        COL_JS_CREACION, COL_JS_GUIA, COL_JS_CLIENTE, COL_JS_ORIGEN, COL_JS_DESTINO,
+        COL_JS_ESTADO, COL_JS_KGS, COL_JS_PRIORIDAD, COL_JS_EMPRESA,
+    ])
+
+
+@unittest.skipUnless(RENDICION_AGO.exists() and RENDICION_SEP.exists(), "faltan las rendiciones reales de Ariel")
+class TestRendicionesReales(unittest.TestCase):
+    """Rendiciones reales de agosto y septiembre 2026, tal como las mando
+    Ariel. Difieren justo en lo que hay que tolerar: nombre de la hoja
+    ("VENTA" vs "Venta") y filas en blanco arriba del encabezado (1 vs 2)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mano = {"ago": _lectura_a_mano(RENDICION_AGO), "sep": _lectura_a_mano(RENDICION_SEP)}
+        cls.ago, cls.anuladas_ago = load_ariel_raw(RENDICION_AGO)
+        cls.sep, cls.anuladas_sep = load_ariel_raw(RENDICION_SEP)
+
+    def test_los_dos_archivos_difieren_en_hoja_y_offset(self):
+        self.assertEqual((self.mano["ago"]["hoja"], self.mano["ago"]["filas_en_blanco"]), ("VENTA", 1))
+        self.assertEqual((self.mano["sep"]["hoja"], self.mano["sep"]["filas_en_blanco"]), ("Venta", 2))
+
+    def test_detecta_la_hoja_venta(self):
+        for path in (RENDICION_AGO, RENDICION_SEP):
+            with self.subTest(archivo=path.name):
+                self.assertTrue(has_ariel_raw_file(path))
+                self.assertFalse(has_ariel_sheet(path))
+
+    def test_columnas(self):
+        # septiembre trae 26 columnas en la hoja (formato vacio): solo
+        # quedan las 15 de la tabla.
+        self.assertEqual(self.mano["sep"]["max_columna"], 26)
+        for df in (self.ago, self.sep):
+            self.assertEqual(list(df.columns), _AR_COLUMNS)
+
+    def test_datos_iguales_a_la_lectura_a_mano(self):
+        for mes, df, anuladas in (("ago", self.ago, self.anuladas_ago), ("sep", self.sep, self.anuladas_sep)):
+            mano = self.mano[mes]
+            with self.subTest(mes=mes):
+                self.assertEqual(list(df["Nro de guía"]), mano["guias"])
+                self.assertEqual(anuladas, mano["anuladas"])
+                self.assertAlmostEqual(float(pd.to_numeric(df["Kg"]).sum()), mano["kg"], places=6)
+                self.assertAlmostEqual(float(pd.to_numeric(df["Ingreso total flete"]).sum()), mano["ingreso"], places=6)
+        self.assertEqual((len(self.ago), self.anuladas_ago), (1561, 1))
+        self.assertEqual((len(self.sep), self.anuladas_sep), (1978, 5))
+        self.assertAlmostEqual(float(pd.to_numeric(self.ago["Ingreso total flete"]).sum()), 90421072.15, places=2)
+        self.assertAlmostEqual(float(pd.to_numeric(self.sep["Ingreso total flete"]).sum()), 105435776.57, places=2)
+
+    def test_valores_con_sentido(self):
+        for mes, df, inicio, fin in (("ago", self.ago, "2026-08-01", "2026-09-01"), ("sep", self.sep, "2026-08-31", "2026-09-30")):
+            with self.subTest(mes=mes):
+                self.assertFalse(df["Fecha de guia"].isna().any())
+                self.assertGreaterEqual(df["Fecha de guia"].min(), pd.Timestamp(inicio))
+                self.assertLessEqual(df["Fecha de guia"].max(), pd.Timestamp(fin))
+                self.assertTrue(set(df["Origen"]) <= set(JETSMART_STATIONS))
+                for col in ("Kg", "Ingreso total flete"):
+                    self.assertFalse(pd.to_numeric(df[col], errors="coerce").isna().any())
+
+    @unittest.skipUnless(TRABAJO_JUL.exists(), "falta el archivo de trabajo de julio")
+    def test_cruce_agosto_contra_julio(self):
+        # Sin el export de agosto: todo Ariel queda "solo en Ariel". Lo que
+        # se valida es lo que depende de los archivos de Ariel/julio.
+        ariel_jul, _ = load_ariel(TRABAJO_JUL)
+        r = cruzar_jetsmart(_export_vacio(), self.ago, ("AGO", "26"), load_jetsmart_export(TRABAJO_JUL), ariel_jul)
+        exc = r.excepciones
+        # 96640, la pendiente de declarar de julio, Ariel la declara en agosto
+        self.assertEqual(r.resumen["motivos_inclusion"].get(INC_PENDIENTE_ANTERIOR), 1)
+        self.assertIn(96640, set(r.incluidas["# Guía"]))
+        # 97479 viene dos veces en la rendicion (misma fila): revision manual
+        self.assertEqual(set(exc.loc[exc["Tipo"] == EXC_DUPLICADA, "Nro guía"]), {97479})
+        # nada de agosto estaba ya declarado en julio
+        self.assertFalse((exc["Tipo"] == EXC_DOBLE).any())
+
+    def test_cruce_septiembre_contra_agosto(self):
+        r = cruzar_jetsmart(_export_vacio(), self.sep, ("SEP", "26"), None, self.ago)
+        exc = r.excepciones
+        # 4 guias que Ariel declaro en agosto Y en septiembre: el cruce las
+        # frena (no entran) para no liquidarlas dos veces.
+        dobles = set(exc.loc[exc["Tipo"] == EXC_DOBLE, "Nro guía"])
+        self.assertEqual(dobles, {98172, 98177, 98182, 98188})
+        self.assertFalse(dobles & set(r.incluidas["# Guía"]))
+        self.assertFalse((exc["Tipo"] == EXC_DUPLICADA).any())
 
 
 if __name__ == "__main__":
