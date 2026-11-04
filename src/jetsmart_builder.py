@@ -152,15 +152,27 @@ def tarifa_usd_kg(station: str) -> tuple[float, bool]:
     return tarifa, station in JETSMART_TARIFA_CONFIRMADA_STATIONS
 
 
-def build_jetsmart_resumen(guias: pd.DataFrame, tipo_cambio: float, vuelos_inter: dict[str, int]) -> dict:
+def build_jetsmart_resumen(
+    guias: pd.DataFrame,
+    tipo_cambio: float,
+    vuelos_inter: dict[str, int],
+    usd_por_vuelo: dict[str, float] | None = None,
+) -> dict:
     """Calcula la hoja LIQUIDACION (y CVLP) a partir de la hoja GUIAS.
 
     tipo_cambio: TC del periodo (dato manual, ver app.py / --tc en main.py).
     vuelos_inter: {estacion: cantidad de vuelos internacionales} de los
     manifiestos, para "Commissions for sales - Inter" (dato manual).
+    usd_por_vuelo: {estacion: USD por vuelo} usados en esta liquidacion. Las
+    estaciones que no vengan (o todo, si es None -- liquidaciones guardadas
+    antes de que el importe fuera un dato de la pantalla) usan el valor de
+    config.py.
     """
     if not tipo_cambio or tipo_cambio <= 0:
         raise ValueError("El tipo de cambio tiene que ser mayor a cero.")
+    importes = {**JETSMART_COMISION_INTER_USD_POR_VUELO, **(usd_por_vuelo or {})}
+    if any(float(v) < 0 for v in importes.values()):
+        raise ValueError("El importe por vuelo no puede ser negativo.")
 
     ventas_totales = float(guias[COL_GUIAS_TOTAL].sum())
     iva = -float(guias[COL_GUIAS_IVA].sum())
@@ -168,14 +180,15 @@ def build_jetsmart_resumen(guias: pd.DataFrame, tipo_cambio: float, vuelos_inter
     comision_domestica = -ventas_netas * JETSMART_COMISION_DOMESTICA_RATE
 
     comisiones_inter = []
-    for station, usd_por_vuelo in JETSMART_COMISION_INTER_USD_POR_VUELO.items():
+    for station in JETSMART_COMISION_INTER_USD_POR_VUELO:
         vuelos = int(vuelos_inter.get(station, 0) or 0)
+        usd = float(importes[station])
         comisiones_inter.append({
             "estacion": station,
             "vuelos": vuelos,
-            "usd_por_vuelo": usd_por_vuelo,
+            "usd_por_vuelo": usd,
             "tc": tipo_cambio,
-            "pesos": vuelos * usd_por_vuelo * tipo_cambio,
+            "pesos": vuelos * usd * tipo_cambio,
         })
     comision_inter = -sum(c["pesos"] for c in comisiones_inter)
 
@@ -231,6 +244,16 @@ def build_jetsmart_resumen(guias: pd.DataFrame, tipo_cambio: float, vuelos_inter
             "total_final": total_neto + iva_cvlp,
         },
     }
+
+
+def build_jetsmart_resumen_guardado(guias: pd.DataFrame, parametros: dict) -> dict:
+    """Recalcula el resumen de una liquidacion ya guardada (Historial) con los
+    datos manuales que se usaron en su momento: TC, cantidad de vuelos e
+    importes por vuelo. Las liquidaciones guardadas antes de que el importe
+    fuera un dato de la pantalla no lo traen: para esas rige config.py."""
+    return build_jetsmart_resumen(
+        guias, parametros["tipo_cambio"], parametros["vuelos_inter"], parametros.get("usd_por_vuelo"),
+    )
 
 
 def unconfirmed_tarifa_activity(resumen: dict) -> dict[str, float]:
