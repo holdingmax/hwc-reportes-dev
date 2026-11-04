@@ -430,6 +430,15 @@ XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 APP = Path(__file__).resolve().parent.parent / "app.py"
 
 
+class NroGuiaEntero(unittest.TestCase):
+    def test_decimales_de_coma_flotante_vuelven_a_entero(self):
+        from src.jetsmart_cruce import nro_guia_entero
+        r = nro_guia_entero(pd.Series([102176.99999999999, 102177.0, 5, None, "x"]))
+        self.assertEqual(r.tolist()[:3], [102177, 102177, 5])
+        self.assertTrue(r.isna().tolist()[3:] == [True, True])
+        self.assertTrue(pd.api.types.is_integer_dtype(r))
+
+
 @hay_archivos
 class PantallaConMesAnteriorGuardado(unittest.TestCase):
     @classmethod
@@ -534,6 +543,18 @@ class PantallaConMesAnteriorGuardado(unittest.TestCase):
         self.assertIn("Todavía no tengo guardado septiembre 2026", texto)
         self.assertIn("una sola vez", texto)
         self.assertTrue(at.button[0].disabled)
+
+    def test_tabla_de_excepciones_muestra_el_nro_de_guia_entero(self):
+        at = self._app([G_OCT, A_OCT])
+        at.number_input[0].set_value(1485.0)
+        at.run()
+        at.button[0].click()
+        at.run()
+        tablas = [d.value for d in at.dataframe if "Nro guía" in d.value.columns and "Tipo" in d.value.columns]
+        self.assertTrue(tablas, "no se mostro la tabla de excepciones")
+        nros = tablas[0]["Nro guía"]
+        self.assertTrue(pd.api.types.is_integer_dtype(nros), f"dtype {nros.dtype}")
+        self.assertTrue(all(float(n).is_integer() for n in nros))
 
     def test_si_no_se_pudieron_guardar_las_guias_del_mes_avisa(self):
         self.guardar.return_value = {"liquidacion": True, "meses": False}

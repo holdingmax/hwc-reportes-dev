@@ -438,3 +438,10 @@ def cruzar_jetsmart(
         resumen=resumen,
         destinos=destinos,
     )
+
+
+def nro_guia_entero(serie: pd.Series) -> pd.Series:
+    """Numeros de guia para mostrar: enteros, sin decimales. Si llegan como
+    decimal (ej. 102176.99999999999 al releer el cruce guardado) se redondean
+    al entero mas cercano; lo que no es numero queda vacio."""
+    return pd.to_numeric(serie, errors="coerce").round().astype("Int64")

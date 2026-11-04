@@ -75,7 +75,7 @@ from src.jetsmart_archivos import (
     cargar_export,
     detectar_archivo,
 )
-from src.jetsmart_cruce import EXC_DIFERENCIA, cruzar_jetsmart
+from src.jetsmart_cruce import EXC_DIFERENCIA, cruzar_jetsmart, nro_guia_entero
 from src.jetsmart_mes_anterior import (
     FUENTE_ARIEL,
     FUENTE_SISTEMA,
@@ -1010,6 +1010,7 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
         vista = excepciones.copy()
         for col in ["Kg export", "Kg Ariel", "Ingreso export", "Ingreso Ariel"]:
             vista[col] = pd.to_numeric(vista[col], errors="coerce")
+        vista["Nro guía"] = nro_guia_entero(vista["Nro guía"])
         vista["Fecha Ariel"] = vista["Fecha Ariel"].fillna("")
         es_dif = vista["Tipo"] == EXC_DIFERENCIA
         vista["Qué difiere"] = ""
