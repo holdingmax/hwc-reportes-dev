@@ -33,6 +33,7 @@ from src.jetsmart_builder import load_jetsmart_export
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "jetsmart"
 GUIAS = FIX / "Guias_Aerea_10-2026.xlsx"
+GUIAS_SEP = FIX / "Guias_Aerea_09-2026.xlsx"
 LISTADO = FIX / "Listado_Facturacion_JM_10-2026.xlsx"
 ARIEL_OCT = FIX / "Ariel_Rendicion_octubre_2026.xlsx"
 ARIEL_SEP = FIX / "Ariel_Rendicion_septiembre_2026.xlsx"
@@ -70,6 +71,11 @@ class DeteccionArchivosReales(unittest.TestCase):
         d = _detectar(GUIAS)
         self.assertEqual((d.tipo, d.cantidad, d.periodo), (TIPO_GUIAS, 1944, OCT))
         self.assertIn("Detecté: Guías del sistema de octubre 2026, 1.944 guías", d.resumen)
+
+    @unittest.skipUnless(GUIAS_SEP.exists(), "faltan las guías de septiembre")
+    def test_guias_de_septiembre(self):
+        d = _detectar(GUIAS_SEP)
+        self.assertEqual((d.tipo, d.cantidad, d.periodo), (TIPO_GUIAS, 1984, SEP))
 
     def test_listado_de_facturacion(self):
         d = _detectar(LISTADO)
@@ -121,6 +127,23 @@ class GuiasDelSistemaComoExport(unittest.TestCase):
         self.assertEqual(len(comunes), 1857)
         self.assertEqual((g.loc[comunes, COL_JS_KGS].astype(float) != l.loc[comunes, COL_JS_KGS].astype(float)).sum(), 0)
         self.assertEqual((g.loc[comunes, COL_JS_PRIORIDAD].astype(float) != l.loc[comunes, COL_JS_PRIORIDAD].astype(float)).sum(), 0)
+
+    def test_solo_se_leen_las_columnas_que_usa_anita(self):
+        # Cliente y destino salen de Ariel, no del sistema: quedan vacios.
+        g = cargar_guias_sistema(GUIAS)
+        self.assertTrue(g["Cliente"].isna().all() and g["Aero. Dstino"].isna().all())
+        self.assertEqual(set(g["Empresa"]), {"Jetsmart"})
+
+    def test_alcanza_con_las_seis_columnas_de_anita(self):
+        # Un export con SOLO #, Kgs., $ Prioridad, Aero.Ori., Estado y Cre. se reconoce y se lee.
+        chico = _xlsx_chico({"Sheet1": [
+            ["#", "Kgs.", "$ Prioridad", "Aero.Ori.", "Estado", "Cre."],
+            [102178, 0.5, 12000.0, "AEP", "Entregada", "31/10/2026"],
+            [102177, 11.0, 33055.0, "NQN", "En vuelo", "31/10/2026"],
+        ]})
+        d = detectar_archivo(chico, "chico.xlsx")
+        self.assertEqual((d.tipo, d.cantidad, d.periodo), (TIPO_GUIAS, 2, OCT))
+        self.assertEqual(list(cargar_guias_sistema(chico)[COL_JS_GUIA]), [102178, 102177])
 
     def test_la_clave_de_cruce_es_la_columna_numeral_no_nro(self):
         # "Nro." trae "CRD-102178"; la guia de Ariel es 102178.

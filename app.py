@@ -938,11 +938,14 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
     motivos = r["motivos_inclusion"]
 
     n_exc = r["excepciones"]
+    n_repetidas = len(r.get("ariel_repetidas_identicas") or [])
     st.markdown(
         _resumen_card("Cruce con Ariel", [
             ("subtotal", "Guías que entran a la liquidación", _num(r["incluidas"], 0)),
             ("ok", "Matchean limpio (export = Ariel)", _num(motivos.get("match", 0), 0)),
             ("item", "Ya declaradas el mes anterior (quedan afuera)", _num(r["ya_declaradas_mes_anterior"], 0)),
+            # Repetidas identicas de Ariel: siempre un error de carga (confirmado por Anita, 4/11/2026).
+            *([("warn", "Filas repetidas de Ariel (contadas una sola vez)", _num(n_repetidas, 0))] if n_repetidas else []),
             ("warn" if n_exc else "ok", "Excepciones para revisar" if n_exc else "Sin excepciones", _num(n_exc, 0)),
         ]),
         unsafe_allow_html=True,

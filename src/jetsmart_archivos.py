@@ -54,23 +54,30 @@ ETIQUETAS = {
     TIPO_IVA: "Libro IVA Ventas de AFIP",
 }
 
-# Columnas del export "Guias Aerea" del sistema -> nombre interno (las del
-# listado de facturacion, que es el formato con el que se armo todo el
-# cruce). El numero de guia es la columna "#": "Nro." trae origen + numero
+# Columnas del export "Guias Aerea" del sistema que se usan -> nombre interno
+# (las del listado de facturacion, que es el formato con el que se armo todo
+# el cruce). Anita (4/11/2026) usa de ese archivo SOLO: numero de guia, kg,
+# prioridad (ingreso), origen y estado; el resto lo descarta. Se agrega la
+# fecha de creacion, que el sistema usa para filtrar el mes y la liquidacion
+# guarda en cada guia. Cliente y destino NO se leen: la liquidacion los toma
+# de Ariel (la fuente de lo que se liquida).
+# El numero de guia es la columna "#": "Nro." trae origen + numero
 # ("CRD-102178") y su prefijo NO coincide con el origen de la guia, asi que
-# no sirve para cruzar contra Ariel. "Ciente" es el typo real del sistema.
+# no sirve para cruzar contra Ariel.
 _GUIAS_A_INTERNO = {
-    "cre.": COL_JS_CREACION,
     "#": COL_JS_GUIA,
-    "ciente": COL_JS_CLIENTE,
-    "aero.ori.": COL_JS_ORIGEN,
-    "aero.dest.": COL_JS_DESTINO,
-    "estado": COL_JS_ESTADO,
     "kgs.": COL_JS_KGS,
     "$ prioridad": COL_JS_PRIORIDAD,
-    "aerolinea": COL_JS_EMPRESA,
+    "aero.ori.": COL_JS_ORIGEN,
+    "estado": COL_JS_ESTADO,
+    "cre.": COL_JS_CREACION,
 }
-_GUIAS_FIRMA = {"#", "nro.", "aero.ori.", "kgs.", "$ prioridad", "aerolinea"}
+# Con estas seis columnas se reconoce el archivo (el listado de facturacion no
+# tiene "#" ni "Kgs." con punto, asi que no se confunden).
+_GUIAS_FIRMA = set(_GUIAS_A_INTERNO)
+# Si el archivo trae la columna Aerolinea se filtra por JetSmart; si no, se
+# asume que ya viene solo JetSmart (asi lo baja Anita).
+_GUIAS_COL_AEROLINEA = "aerolinea"
 _LISTADO_FIRMA = {_norm(c) for c in (COL_JS_CREACION, COL_JS_GUIA, COL_JS_KGS, COL_JS_PRIORIDAD, COL_JS_EMPRESA)}
 _IVA_FIRMA = {"punto de venta", "numero desde"}
 
@@ -133,13 +140,22 @@ def _columnas_norm(df: pd.DataFrame) -> set[str]:
     return {_norm(c) for c in df.columns}
 
 
+def _columnas_export() -> list[str]:
+    return [
+        COL_JS_CREACION, COL_JS_GUIA, COL_JS_CLIENTE, COL_JS_ORIGEN, COL_JS_DESTINO,
+        COL_JS_ESTADO, COL_JS_KGS, COL_JS_PRIORIDAD, COL_JS_EMPRESA,
+    ]
+
+
 def cargar_guias_sistema(source) -> pd.DataFrame:
     """Guias del sistema ("Guias Aerea") en el formato interno del export
-    (mismas columnas que load_jetsmart_export), listas para el cruce.
+    (mismas columnas que load_jetsmart_export), listas para el cruce. Solo se
+    leen las columnas que Anita usa (ver _GUIAS_A_INTERNO); cliente y destino
+    quedan vacios porque la liquidacion los toma de Ariel.
 
-    Filtra por la columna Aerolinea == JetSmart sin distinguir mayusculas,
-    igual que el listado: si algun dia el sistema exporta varias aerolineas
-    juntas, solo entran las de JetSmart.
+    Si el archivo trae la columna Aerolinea, filtra por JetSmart sin
+    distinguir mayusculas (igual que el listado): si algun dia el sistema
+    exporta varias aerolineas juntas, solo entran las de JetSmart.
     """
     _rewind(source)
     df = pd.read_excel(source, sheet_name=0)
@@ -148,9 +164,14 @@ def cargar_guias_sistema(source) -> pd.DataFrame:
     if faltan:
         raise ValueError("faltan columnas de las guías del sistema: " + ", ".join(faltan))
     out = pd.DataFrame({interno: df[por_norm[k]] for k, interno in _GUIAS_A_INTERNO.items()})
+    out[COL_JS_CLIENTE] = None
+    out[COL_JS_DESTINO] = None
+    out[COL_JS_EMPRESA] = "Jetsmart"
+    if _GUIAS_COL_AEROLINEA in por_norm:
+        out = out[df[por_norm[_GUIAS_COL_AEROLINEA]].astype(str).str.strip().str.upper().eq("JETSMART").to_numpy()]
     out = out[out[COL_JS_GUIA].notna()]
-    out = out[out[COL_JS_EMPRESA].astype(str).str.strip().str.upper() == "JETSMART"]
-    return out.reset_index(drop=True)
+    # Mismo orden de columnas que el listado: las dos fuentes son intercambiables para el cruce.
+    return out[_columnas_export()].reset_index(drop=True)
 
 
 def cargar_export(source, tipo: str) -> pd.DataFrame:

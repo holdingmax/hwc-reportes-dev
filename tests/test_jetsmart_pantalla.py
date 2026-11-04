@@ -24,7 +24,7 @@ ARCHIVOS = {
     "ariel_oct": FIX / "Ariel_Rendicion_octubre_2026.xlsx",
     "iva_oct": FIX / "IVA_VENTAS_HW_10-2026.xlsx",
     "ariel_sep": FIX / "Ariel_Rendicion_septiembre_2026.xlsx",
-    "bd_sep": FIX / "PRUEBA_LIQUIDACION_09-2026.xlsx",   # listado de septiembre (hoja BD)
+    "guias_sep": FIX / "Guias_Aerea_09-2026.xlsx",
     "liq_armada": FIX / "LIQ_ECS_07-2026_00000005.xlsx",
 }
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -98,7 +98,7 @@ class PantallaJetSmart(unittest.TestCase):
         self.assertEqual(len(at.exception), 0)
 
     def test_flujo_completo_genera_la_liquidacion(self):
-        at = _app(["iva_oct", "ariel_sep", "guias_oct", "bd_sep", "ariel_oct"])
+        at = _app(["iva_oct", "ariel_sep", "guias_oct", "guias_sep", "ariel_oct"])
         texto = _textos(at)
         self.assertNotIn("Falta", texto)
         # Tipo de cambio: sin el, el boton sigue deshabilitado.
@@ -120,6 +120,8 @@ class PantallaJetSmart(unittest.TestCase):
         kwargs = self.guardar.call_args.kwargs
         self.assertEqual(kwargs["nombre_archivo"], ARCHIVOS["guias_oct"].name)
         self.assertEqual(kwargs["period"], ("OCT", "26"))
+        # Resultado validado por Anita (4/11/2026): 1.934 match + 19 pendientes del mes anterior.
+        self.assertEqual(len(kwargs["guias"]), 1953)
 
 
 if __name__ == "__main__":
