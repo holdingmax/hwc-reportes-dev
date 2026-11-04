@@ -89,6 +89,7 @@ from src.jetsmart_mes_anterior import (
 from src.jetsmart_builder import (
     build_jetsmart_guias,
     build_jetsmart_resumen,
+    build_jetsmart_resumen_guardado,
     detect_jetsmart_period,
     unconfirmed_tarifa_activity,
     write_jetsmart_liquidacion,
@@ -588,6 +589,18 @@ def _num(value: float, decimales: int = 2) -> str:
     return texto.replace(",", "").replace(".", ",").replace("", ".")
 
 
+def _num_libre(value: float) -> str:
+    """Numero argentino con los decimales que haga falta (hasta 2): 17,5 / 35 / 1.234,25."""
+    texto = _num(value)
+    return texto.rstrip("0").rstrip(",") if "," in texto else texto
+
+
+def _cuenta_vuelos(vuelos: int, usd_por_vuelo: float) -> str:
+    """La cuenta de una estacion, en vivo: "49 vuelos × 17,5 USD = 857,5 USD"."""
+    unidad = "vuelo" if vuelos == 1 else "vuelos"
+    return f"{vuelos} {unidad} × {_num_libre(usd_por_vuelo)} USD = {_num_libre(vuelos * usd_por_vuelo)} USD"
+
+
 def _money(value: float) -> str:
     return f"$ {_num(value)}"
 
@@ -706,7 +719,7 @@ def _obtener_detalle_liquidacion(fila) -> tuple[pd.DataFrame, dict | None, str |
             return None
         guias = pd.DataFrame(detalle_totales["guias"])
         parametros = detalle_totales["parametros"]
-        resumen = build_jetsmart_resumen(guias, parametros["tipo_cambio"], parametros["vuelos_inter"])
+        resumen = build_jetsmart_resumen_guardado(guias, parametros)
         resumen["_cruce"] = detalle_totales.get("cruce")
         return guias, resumen, None
 
@@ -1112,7 +1125,9 @@ def _info_archivos(fuentes: dict, export, ariel) -> list[dict]:
     return info
 
 
-def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_inter: dict[str, int]) -> tuple[object, tuple[str, str]]:
+def _render_jetsmart_result(
+    conjunto, fuentes: dict, tipo_cambio: float, vuelos_inter: dict[str, int], usd_por_vuelo: dict[str, float],
+) -> tuple[object, tuple[str, str]]:
     """Corre el cruce con Ariel + la liquidacion de JetSmart y muestra el resultado.
 
     conjunto: los archivos ya reconocidos y asignados a su rol (ver
@@ -1171,7 +1186,7 @@ def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_
         })
 
         guias = build_jetsmart_guias(resultado.incluidas)
-        resumen = build_jetsmart_resumen(guias, tipo_cambio, vuelos_inter)
+        resumen = build_jetsmart_resumen(guias, tipo_cambio, vuelos_inter, usd_por_vuelo)
         cruce = {
             "resumen": resultado.resumen,
             "excepciones": resultado.excepciones,
@@ -1191,7 +1206,7 @@ def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_
             filas_otros_meses=len(otros_meses),
             guias=guias,
             resumen=resumen,
-            parametros={"tipo_cambio": tipo_cambio, "vuelos_inter": vuelos_inter},
+            parametros={"tipo_cambio": tipo_cambio, "vuelos_inter": vuelos_inter, "usd_por_vuelo": usd_por_vuelo},
             cruce={
                 "resumen": resultado.resumen,
                 "excepciones": resultado.excepciones.astype(object).where(resultado.excepciones.notna(), None).to_dict(orient="records"),
@@ -1317,17 +1332,25 @@ with st.container(key="zona_carga"):
     # cambio del periodo (todavia sin confirmar de donde sale -- por ahora
     # manual) y la cantidad de vuelos internacionales por estacion de los
     # manifiestos. Sin TC no se puede calcular GHA Services.
-    tipo_cambio, vuelos_inter = 0.0, {}
+    tipo_cambio, vuelos_inter, usd_por_vuelo = 0.0, {}, {}
     if es_jetsmart_sel:
         with st.container(border=True, key="card_datos"):
             _step(3, "Completá los datos del período", "No vienen en ningún archivo: salen del tipo de cambio del mes y de los manifiestos.")
             tipo_cambio = st.number_input("Tipo de cambio del período (ARS por USD)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
-            vuelos_cols = st.columns(len(JETSMART_COMISION_INTER_USD_POR_VUELO))
-            for col, (station, usd) in zip(vuelos_cols, JETSMART_COMISION_INTER_USD_POR_VUELO.items()):
-                with col:
+            for station, usd_default in JETSMART_COMISION_INTER_USD_POR_VUELO.items():
+                st.markdown(f"**Vuelos internacionales {station}**")
+                col_cant, col_usd = st.columns(2)
+                with col_cant:
+                    # Entera: no hay medio vuelo.
                     vuelos_inter[station] = int(st.number_input(
-                        f"Vuelos internacionales {station} ({usd:g} USD c/u)", min_value=0, value=0, step=1,
+                        "Cantidad de vuelos", min_value=0, value=0, step=1, key=f"js_vuelos_{station}",
                     ))
+                with col_usd:
+                    usd_por_vuelo[station] = float(st.number_input(
+                        "USD por vuelo", min_value=0.0, value=float(usd_default), step=0.5, format="%.2f",
+                        key=f"js_usd_{station}",
+                    ))
+                st.caption(_cuenta_vuelos(vuelos_inter[station], usd_por_vuelo[station]))
 
     if es_jetsmart_sel:
         requisitos = _requisitos_jetsmart(conjunto, bool(fuentes), tipo_cambio)
@@ -1353,7 +1376,7 @@ with st.container(key="zona_carga"):
             airline_cfg = AIRLINE_CONFIGS[airline_key]
             try:
                 if airline_cfg.get("flow") == FLOW_JETSMART:
-                    buffer, period = _render_jetsmart_result(conjunto, fuentes, tipo_cambio, vuelos_inter)
+                    buffer, period = _render_jetsmart_result(conjunto, fuentes, tipo_cambio, vuelos_inter, usd_por_vuelo)
                 elif airline_cfg.get("flow") == FLOW_LIQUIDACION:
                     buffer, _, period = _render_liquidacion_result(uploaded_file)
                 else:

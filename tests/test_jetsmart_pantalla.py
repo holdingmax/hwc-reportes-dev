@@ -123,6 +123,23 @@ class PantallaJetSmart(unittest.TestCase):
         # Resultado validado por Anita (4/11/2026): 1.934 match + 19 pendientes del mes anterior.
         self.assertEqual(len(kwargs["guias"]), 1953)
 
+    def test_guarda_los_importes_por_vuelo_usados(self):
+        at = _app(["iva_oct", "ariel_sep", "guias_oct", "guias_sep", "ariel_oct"])
+        at.number_input(key="js_vuelos_EZE").set_value(49)
+        at.number_input(key="js_usd_EZE").set_value(20.25)
+        at.number_input(key="js_vuelos_MDZ").set_value(10)
+        at.number_input[0].set_value(1485.0)
+        at.run()
+        at.button[0].click()
+        at.run()
+        self.assertEqual(len(at.exception), 0)
+        parametros = self.guardar.call_args.kwargs["parametros"]
+        self.assertEqual(parametros["vuelos_inter"], {"EZE": 49, "MDZ": 10})
+        self.assertEqual(parametros["usd_por_vuelo"], {"EZE": 20.25, "MDZ": 35.0})
+        # El resumen que se guardo y se mostro usa esos importes, no los de config.py.
+        comisiones = {c["estacion"]: c for c in self.guardar.call_args.kwargs["resumen"]["comisiones_inter"]}
+        self.assertEqual(comisiones["EZE"]["usd_por_vuelo"], 20.25)
+
 
 if __name__ == "__main__":
     unittest.main()
