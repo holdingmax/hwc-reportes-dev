@@ -112,6 +112,11 @@ def filas_guias_periodo(export: pd.DataFrame, ariel: pd.DataFrame, destinos: dic
     con datos distintos (ej. 97479 de agosto 2026) se guarda la primera fila;
     para el mes siguiente solo importa que el numero estaba.
     """
+    # destinos None = carga inicial (sin cruce): las filas quedan sin resultado.
+    # destinos dado = version de 'liquidacion': CADA guia tiene que tener su
+    # resultado (ver validar_resultados), asi el mes siguiente sabe que paso con
+    # todas, incluidas las pendientes y las excluidas.
+    es_liquidacion = destinos is not None
     destinos = destinos or {}
 
     def resultado(g):
@@ -135,7 +140,21 @@ def filas_guias_periodo(export: pd.DataFrame, ariel: pd.DataFrame, destinos: dic
             "origen": _texto(r[COL_AR_ORIGEN]), "kg": _numero(r[COL_AR_KG]), "ingreso": _numero(r[COL_AR_INGRESO]),
             "estado": None, "resultado": res, "motivo": motivo,
         })
+    if es_liquidacion:
+        validar_resultados(filas)
     return filas
+
+
+def validar_resultados(filas: list[dict]) -> None:
+    """Una version de origen 'liquidacion' SIEMPRE guarda el resultado del cruce
+    en cada guia. Solo la carga inicial puede dejarlo vacio: ese mes se liquido
+    fuera del sistema y aca no se cruzo. Lanza ValueError si falta alguno."""
+    sin_resultado = sorted({f["nro_guia"] for f in filas if not f.get("resultado")})
+    if sin_resultado:
+        raise ValueError(
+            f"{len(sin_resultado)} guías sin resultado del cruce (ej. {sin_resultado[:5]}): una liquidación "
+            "no se guarda con guías sin resultado."
+        )
 
 
 def frames_desde_filas(filas: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:

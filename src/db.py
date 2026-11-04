@@ -53,7 +53,7 @@ from src.config import (
     COL_TRANS_E,
     LATAM_LIQUIDACION_STATION,
 )
-from src.jetsmart_mes_anterior import LecturaMesAnterior, ResumenMesAnterior
+from src.jetsmart_mes_anterior import LecturaMesAnterior, ResumenMesAnterior, validar_resultados
 from src.period_utils import Period, detect_period, excluded_by_period
 
 load_dotenv()
@@ -412,6 +412,11 @@ def _guardar_mes_jetsmart(conn: psycopg.Connection, mes: dict, liquidacion_id: i
     agrega la version siguiente; la vigente es la de mayor numero."""
     periodo = _period_to_date(mes["period"])
     es_liquidacion = mes["origen_dato"] == "liquidacion"
+    if es_liquidacion:
+        # La tabla permite resultado NULL solo por la carga inicial; esa excepcion no
+        # puede colarse en una liquidacion (no es expresable como CHECK: el origen
+        # vive en otra tabla). Se valida antes de escribir nada.
+        validar_resultados(mes["filas"])
     with conn.cursor() as cur:
         cur.execute("SELECT COALESCE(MAX(version), 0) + 1 FROM jetsmart_periodos WHERE periodo = %s", (periodo,))
         version = cur.fetchone()[0]

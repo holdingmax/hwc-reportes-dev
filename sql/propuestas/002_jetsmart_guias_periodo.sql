@@ -73,6 +73,10 @@ CREATE TABLE jetsmart_guias_periodo (
     --   excluida  = quedo afuera: declarada dos veces, sin confirmar, numero
     --               repetido en Ariel con datos distintos, o ya declarada el
     --               mes anterior
+    --   (Regla que NO se puede expresar como CHECK, porque el origen vive en
+    --   jetsmart_periodos: las versiones de origen 'liquidacion' SIEMPRE traen
+    --   resultado en cada guia. Lo valida src/db.py antes de escribir y lo fija
+    --   tests/test_jetsmart_mes_anterior.py.)
     --   NULL      = carga inicial: ese mes se liquido fuera del sistema y aca no
     --               se cruzo, asi que no hay resultado que guardar (no se inventa).
     --               Para el mes siguiente solo importa QUE guias estaban en cada fuente.
