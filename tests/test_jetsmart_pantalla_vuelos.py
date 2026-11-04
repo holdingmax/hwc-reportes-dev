@@ -70,5 +70,25 @@ class VuelosInternacionales(unittest.TestCase):
         self.assertIn("1 vuelo × 17,5 USD = 17,5 USD", _textos(self.at))
 
 
+    def test_aviso_amarillo_si_la_cantidad_supera_150_por_estacion(self):
+        self.at.number_input(key="js_vuelos_EZE").set_value(151).run()
+        avisos = [w.value for w in self.at.warning]
+        self.assertEqual(avisos.count("¿Es la cantidad o el importe?"), 1)
+        # La cuenta se sigue mostrando: el aviso no bloquea nada.
+        self.assertIn("151 vuelos", _textos(self.at))
+        self.assertEqual(len(self.at.exception), 0)
+
+    def test_sin_aviso_hasta_150_inclusive(self):
+        self.at.number_input(key="js_vuelos_EZE").set_value(150).run()
+        self.at.number_input(key="js_vuelos_MDZ").set_value(49).run()
+        self.assertEqual([w.value for w in self.at.warning], [])
+
+    def test_el_aviso_es_por_estacion(self):
+        self.at.number_input(key="js_vuelos_MDZ").set_value(1000).run()
+        self.assertEqual([w.value for w in self.at.warning], ["¿Es la cantidad o el importe?"])
+        self.at.number_input(key="js_vuelos_EZE").set_value(200).run()
+        self.assertEqual(len(self.at.warning), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

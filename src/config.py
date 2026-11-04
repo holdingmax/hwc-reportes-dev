@@ -254,3 +254,6 @@ JETSMART_IIBB = 0.0
 # vuelos sale de los manifiestos, que no vienen en ningun export: se carga a
 # mano al generar la liquidacion, igual que el tipo de cambio.
 JETSMART_COMISION_INTER_USD_POR_VUELO = {"EZE": 17.5, "MDZ": 35.0}
+# Por encima de esta cantidad de vuelos por estacion la pantalla avisa (no
+# bloquea): suele ser el importe tipeado en el campo de la cantidad.
+JETSMART_VUELOS_INTER_AVISO_CANTIDAD = 150

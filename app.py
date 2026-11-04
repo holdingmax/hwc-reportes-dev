@@ -48,6 +48,7 @@ from src.config import (
     FLOW_JETSMART,
     FLOW_LIQUIDACION,
     JETSMART_COMISION_INTER_USD_POR_VUELO,
+    JETSMART_VUELOS_INTER_AVISO_CANTIDAD,
     LATAM_SUBFACTURA_4M,
     LATAM_SUBFACTURA_LA,
 )
@@ -1351,6 +1352,8 @@ with st.container(key="zona_carga"):
                         key=f"js_usd_{station}",
                     ))
                 st.caption(_cuenta_vuelos(vuelos_inter[station], usd_por_vuelo[station]))
+                if vuelos_inter[station] > JETSMART_VUELOS_INTER_AVISO_CANTIDAD:
+                    st.warning("¿Es la cantidad o el importe?", icon=":material/warning:")
 
     if es_jetsmart_sel:
         requisitos = _requisitos_jetsmart(conjunto, bool(fuentes), tipo_cambio)
