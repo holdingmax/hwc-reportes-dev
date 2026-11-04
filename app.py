@@ -75,7 +75,7 @@ from src.jetsmart_archivos import (
     cargar_export,
     detectar_archivo,
 )
-from src.jetsmart_cruce import EXC_DIFERENCIA, cruzar_jetsmart, nro_guia_entero
+from src.jetsmart_cruce import EXC_DIFERENCIA, INC_PENDIENTE_ANTERIOR, cruzar_jetsmart, nro_guia_entero
 from src.jetsmart_mes_anterior import (
     FUENTE_ARIEL,
     FUENTE_SISTEMA,
@@ -956,6 +956,9 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
         _resumen_card("Cruce con Ariel", [
             ("subtotal", "Guías que entran a la liquidación", _num(r["incluidas"], 0)),
             ("ok", "Matchean limpio (export = Ariel)", _num(motivos.get("match", 0), 0)),
+            # Pendientes de declarar el mes anterior que Ariel declaro ahora: entran, y sin esta linea las cuentas no cierran.
+            *([("item", "Pendientes del mes anterior, declaradas ahora", _num(motivos[INC_PENDIENTE_ANTERIOR], 0))]
+              if motivos.get(INC_PENDIENTE_ANTERIOR) else []),
             ("item", "Ya declaradas el mes anterior (quedan afuera)", _num(r["ya_declaradas_mes_anterior"], 0)),
             # Repetidas identicas de Ariel: siempre un error de carga (confirmado por Anita, 4/11/2026).
             *([("warn", "Filas repetidas de Ariel (contadas una sola vez)", _num(n_repetidas, 0))] if n_repetidas else []),

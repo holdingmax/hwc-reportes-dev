@@ -30,6 +30,7 @@ from src.jetsmart_archivos import (
     cargar_guias_sistema,
 )
 from src.jetsmart_cruce import (
+    INC_PENDIENTE_ANTERIOR,
     COL_AR_GUIA,
     RES_EXCLUIDA,
     RES_INCLUIDA,
@@ -543,6 +544,20 @@ class PantallaConMesAnteriorGuardado(unittest.TestCase):
         self.assertIn("Todavía no tengo guardado septiembre 2026", texto)
         self.assertIn("una sola vez", texto)
         self.assertTrue(at.button[0].disabled)
+
+    def test_resumen_del_cruce_muestra_las_pendientes_del_mes_anterior(self):
+        at = self._app([G_OCT, A_OCT])
+        at.number_input[0].set_value(1485.0)
+        at.run()
+        at.button[0].click()
+        at.run()
+        html = " ".join(m.value for m in at.markdown)
+        self.assertIn("Pendientes del mes anterior, declaradas ahora", html)
+        r = self.guardar.call_args.kwargs["cruce"]["resumen"]["motivos_inclusion"]
+        n = r[INC_PENDIENTE_ANTERIOR]
+        self.assertEqual(n, 19)
+        self.assertEqual(sum(r.values()), 1953)
+        self.assertIn("19", html.split("Pendientes del mes anterior, declaradas ahora")[1][:200])
 
     def test_tabla_de_excepciones_muestra_el_nro_de_guia_entero(self):
         at = self._app([G_OCT, A_OCT])
