@@ -80,6 +80,7 @@ class DeteccionArchivosReales(unittest.TestCase):
         # 1.973 filas validas, 20 repetidas identicas -> 1.953 guias distintas; 8 anuladas.
         self.assertEqual((d.tipo, d.cantidad, d.periodo), (TIPO_ARIEL, 1953, OCT))
         self.assertIn("8 anuladas", d.resumen)
+        self.assertIn("20 filas repetidas idénticas, se cuentan una sola vez", d.resumen)
 
     def test_libro_iva(self):
         d = _detectar(IVA)
@@ -124,7 +125,7 @@ class GuiasDelSistemaComoExport(unittest.TestCase):
     def test_la_clave_de_cruce_es_la_columna_numeral_no_nro(self):
         # "Nro." trae "CRD-102178"; la guia de Ariel es 102178.
         g = cargar_guias_sistema(GUIAS)
-        ariel, _ = cargar_ariel(ARIEL_OCT, TIPO_ARIEL)
+        ariel = cargar_ariel(ARIEL_OCT, TIPO_ARIEL).guias
         comunes = set(pd.to_numeric(g[COL_JS_GUIA])) & set(ariel["Nro de guía"])
         self.assertEqual(len(comunes), 1934)
 

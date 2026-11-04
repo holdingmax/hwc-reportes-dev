@@ -31,6 +31,12 @@ junio y julio 2026 en tests/test_jetsmart_cruce.py):
   Si esta tambien en el Ariel del mes anterior (declarada dos veces) o no
   hay forma de confirmarla, queda afuera y va a revision manual.
 
+- Filas repetidas IDENTICAS en Ariel (todas las columnas iguales, ej. un
+  bloque del 31/10 pegado dos veces en octubre 2026: 20 guias): son la misma
+  guia cargada dos veces, no dos envios. Se cuentan UNA vez y se avisa. Si el
+  mismo numero de guia aparece con datos distintos (aunque sea una letra del
+  destinatario, como 97479 en agosto) NO se toca: va a revision manual.
+
 Fuera de alcance: la validacion contra AFIP y las correcciones manuales que
 Anita hace sobre su copia del archivo de Ariel (ej. un ingreso corregido a
 mano): esas aparecen aca como diferencia marcada, no como error silencioso.
@@ -121,10 +127,20 @@ def _es_fila_encabezado(valores) -> bool:
     return _norm(COL_AR_GUIA) in normalizados and bool(normalizados & {"prefihjo", "prefijo"})
 
 
-def _limpiar_ariel(df: pd.DataFrame, origen: str) -> tuple[pd.DataFrame, int]:
+@dataclass
+class ArielLeido:
+    guias: pd.DataFrame
+    anuladas: int
+    # Numero de guia de cada fila repetida identica que se descarto (una
+    # entrada por fila descartada), para avisarlo en pantalla y en el Excel.
+    repetidas_identicas: list[int] = field(default_factory=list)
+
+
+def _limpiar_ariel_detalle(df: pd.DataFrame, origen: str) -> ArielLeido:
     """Limpieza comun a la hoja ARIEL (archivo de trabajo) y a la hoja Venta
     (rendicion cruda de Ariel). Descarta: filas sin numero de guia numerico
-    (pie de totales, filas vacias) y guias anuladas.
+    (pie de totales, filas vacias), guias anuladas y filas repetidas
+    identicas (se queda con la primera).
 
     origen: nombre de la hoja, para el mensaje de error.
     """
@@ -136,10 +152,21 @@ def _limpiar_ariel(df: pd.DataFrame, origen: str) -> tuple[pd.DataFrame, int]:
     nro = pd.to_numeric(df[COL_AR_GUIA], errors="coerce")
     n_anuladas = int(anulada.sum())
     df = df[nro.notna() & ~anulada].copy()
+    # Repetidas identicas: se comparan TODAS las columnas tal como vienen,
+    # antes de normalizar nada, para que "identica" sea estricto. Dos filas
+    # con la misma guia pero algun dato distinto no se tocan (ver cruzar_jetsmart).
+    repetida = df.duplicated(keep="first")
+    repetidas = [int(float(g)) for g in df.loc[repetida, COL_AR_GUIA]]
+    df = df[~repetida].copy()
     df[COL_AR_GUIA] = df[COL_AR_GUIA].astype("int64")
     df[COL_AR_FECHA] = pd.to_datetime(df[COL_AR_FECHA], errors="coerce")
     df[COL_AR_ORIGEN] = df[COL_AR_ORIGEN].astype(str).str.strip().str.upper()
-    return df.reset_index(drop=True), n_anuladas
+    return ArielLeido(df.reset_index(drop=True), n_anuladas, repetidas)
+
+
+def _limpiar_ariel(df: pd.DataFrame, origen: str) -> tuple[pd.DataFrame, int]:
+    leido = _limpiar_ariel_detalle(df, origen)
+    return leido.guias, leido.anuladas
 
 
 def has_ariel_sheet(source) -> bool:
@@ -148,19 +175,30 @@ def has_ariel_sheet(source) -> bool:
         return _find_sheet(xls, "ARIEL") is not None
 
 
-def load_ariel(source) -> tuple[pd.DataFrame, int]:
-    """(guias validas de Ariel, cantidad de anuladas descartadas).
-
-    Lee la hoja "ARIEL" del archivo de trabajo. Descarta: filas sin numero
-    de guia numerico (pie de totales, filas vacias) y guias anuladas.
-    """
+def leer_ariel(source, cruda: bool = False) -> ArielLeido:
+    """Guias de Ariel con el detalle de lo descartado (anuladas y repetidas
+    identicas). cruda=True lee la rendicion original (hoja Venta); si no, la
+    hoja ARIEL del archivo de trabajo."""
+    if cruda:
+        return _limpiar_ariel_detalle(_leer_venta(source), "Venta")
     _rewind(source)
     with pd.ExcelFile(source) as xls:
         sheet = _find_sheet(xls, "ARIEL")
         if sheet is None:
             raise ValueError("El archivo no tiene la hoja ARIEL (el archivo de Ariel del mes, tal como lo arma Anita).")
         df = pd.read_excel(xls, sheet_name=sheet)
-    return _limpiar_ariel(df, "ARIEL")
+    return _limpiar_ariel_detalle(df, "ARIEL")
+
+
+def load_ariel(source) -> tuple[pd.DataFrame, int]:
+    """(guias validas de Ariel, cantidad de anuladas descartadas).
+
+    Lee la hoja "ARIEL" del archivo de trabajo. Descarta: filas sin numero
+    de guia numerico (pie de totales, filas vacias), guias anuladas y filas
+    repetidas identicas.
+    """
+    leido = leer_ariel(source)
+    return leido.guias, leido.anuladas
 
 
 def _leer_venta(source) -> pd.DataFrame:
@@ -210,7 +248,8 @@ def load_ariel_raw(source) -> tuple[pd.DataFrame, int]:
     (hoja "Venta", sin importar mayusculas) en vez de la hoja ARIEL del
     archivo de trabajo. Las demas hojas (manifiestos) se ignoran. Devuelve
     el mismo formato: (guias validas, cantidad de anuladas descartadas)."""
-    return _limpiar_ariel(_leer_venta(source), "Venta")
+    leido = leer_ariel(source, cruda=True)
+    return leido.guias, leido.anuladas
 
 
 def _guias_set(export: pd.DataFrame | None) -> set[int]:
@@ -252,12 +291,15 @@ def cruzar_jetsmart(
     export_anterior: pd.DataFrame | None,
     ariel_anterior: pd.DataFrame | None,
     export_siguiente: pd.DataFrame | None = None,
+    ariel_repetidas_identicas: list[int] | None = None,
 ) -> CruceResultado:
     """Cruza el export del mes contra el Ariel del mes (ver reglas arriba).
 
     export / export_anterior / export_siguiente: como los devuelve
     load_jetsmart_export. ariel / ariel_anterior: como los devuelve
     load_ariel. export_siguiente es opcional.
+    ariel_repetidas_identicas: guias repetidas identicas que ya se descartaron
+    al leer Ariel (ver leer_ariel); solo se anotan en el resumen para avisarlo.
     """
     exp = export.copy()
     exp["_g"] = pd.to_numeric(exp[COL_JS_GUIA], errors="coerce").astype("int64")
@@ -366,6 +408,7 @@ def cruzar_jetsmart(
         "excepciones": len(exc_df),
         "excepciones_por_tipo": exc_df["Tipo"].value_counts().to_dict(),
         "ingreso_fuera_por_revision": float(pd.to_numeric(no_incluidas["Ingreso Ariel"], errors="coerce").fillna(0).sum()),
+        "ariel_repetidas_identicas": [int(g) for g in (ariel_repetidas_identicas or [])],
         "export_siguiente_cargado": hay_siguiente,
         "ultimo_dia": ultimo_dia.strftime("%d/%m/%Y"),
     }

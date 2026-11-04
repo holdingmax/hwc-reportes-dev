@@ -948,6 +948,20 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
         unsafe_allow_html=True,
     )
 
+    repetidas = r.get("ariel_repetidas_identicas") or []
+    if repetidas:
+        # Aviso visible (tambien en el historial): se cuentan una vez, pero hay que saber que Ariel las mando dos.
+        unicas = sorted(set(repetidas))
+        st.warning(
+            f"La rendición de Ariel traía {len(repetidas)} "
+            f"{'fila repetida idéntica' if len(repetidas) == 1 else 'filas repetidas idénticas'} "
+            f"({len(unicas)} {'guía' if len(unicas) == 1 else 'guías'}): la misma guía cargada dos veces. "
+            "Las conté una sola vez en la liquidación.",
+            icon=":material/content_copy:",
+        )
+        with st.expander("Ver las guías repetidas", key=f"{key}_repetidas"):
+            st.write(", ".join(str(g) for g in unicas))
+
     if not ultimo_dia.empty:
         st.warning(
             f"Se incluyeron {len(ultimo_dia)} guías de Ariel del último día del mes ({r['ultimo_dia']}) "
@@ -1060,7 +1074,7 @@ def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_
         return cargar_export(fuentes[id(detectado)], detectado.tipo)
 
     def leer_ariel(detectado):
-        return cargar_ariel(fuentes[id(detectado)], detectado.tipo)[0]
+        return cargar_ariel(fuentes[id(detectado)], detectado.tipo)
 
     with st.spinner("Cruzando con Ariel y generando liquidación..."):
         export = leer_export(conjunto.export_mes)
@@ -1068,11 +1082,15 @@ def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_
         # liquida es lo que Ariel declaro. Las guias de otros meses se avisan aparte.
         period = conjunto.periodo
         _, otros_meses = detect_jetsmart_period(export)
-        ariel = leer_ariel(conjunto.ariel_mes)
+        ariel_leido = leer_ariel(conjunto.ariel_mes)
+        ariel = ariel_leido.guias
         export_anterior = leer_export(conjunto.export_anterior)
-        ariel_anterior = leer_ariel(conjunto.ariel_anterior)
+        ariel_anterior = leer_ariel(conjunto.ariel_anterior).guias
         export_siguiente = leer_export(conjunto.export_siguiente) if conjunto.export_siguiente is not None else None
-        resultado = cruzar_jetsmart(export, ariel, period, export_anterior, ariel_anterior, export_siguiente)
+        resultado = cruzar_jetsmart(
+            export, ariel, period, export_anterior, ariel_anterior, export_siguiente,
+            ariel_repetidas_identicas=ariel_leido.repetidas_identicas,
+        )
 
         guias = build_jetsmart_guias(resultado.incluidas)
         resumen = build_jetsmart_resumen(guias, tipo_cambio, vuelos_inter)

@@ -111,6 +111,11 @@ class PantallaJetSmart(unittest.TestCase):
         self.assertEqual(len(at.exception), 0)
         self.assertEqual([e.value for e in at.error], [])
         self.assertEqual(len(at.get("download_button")), 1)
+        # Las 20 filas repetidas identicas de Ariel se avisan, en el resultado y en el resumen guardado.
+        avisos = " ".join(w.value for w in at.warning)
+        self.assertIn("20 filas repetidas idénticas", avisos)
+        resumen_guardado = self.guardar.call_args.kwargs["cruce"]["resumen"]
+        self.assertEqual(len(resumen_guardado["ariel_repetidas_identicas"]), 20)
         # Se guardo con las guias del sistema de octubre, no con el listado.
         kwargs = self.guardar.call_args.kwargs
         self.assertEqual(kwargs["nombre_archivo"], ARCHIVOS["guias_oct"].name)

@@ -376,7 +376,9 @@ def _write_comisiones_inter_sheet(writer: pd.ExcelWriter, resumen: dict) -> None
     ws.column_dimensions["E"].width = 16
 
 
-def _write_cruce_sheets(writer: pd.ExcelWriter, excepciones: pd.DataFrame, incluidas_ultimo_dia: pd.DataFrame) -> None:
+def _write_cruce_sheets(
+    writer: pd.ExcelWriter, excepciones: pd.DataFrame, incluidas_ultimo_dia: pd.DataFrame, repetidas_identicas=(),
+) -> None:
     """Resultado del cruce con Ariel (ver jetsmart_cruce.py): solo las
     excepciones, y aparte las guias incluidas por la regla de ultimo dia."""
     if excepciones.empty:
@@ -386,6 +388,12 @@ def _write_cruce_sheets(writer: pd.ExcelWriter, excepciones: pd.DataFrame, inclu
         excepciones.to_excel(writer, sheet_name="EXCEPCIONES CRUCE", index=False)
     if not incluidas_ultimo_dia.empty:
         incluidas_ultimo_dia.to_excel(writer, sheet_name="INCLUIDAS ULTIMO DIA", index=False)
+    if repetidas_identicas:
+        # Aviso para quien revise el Excel sin la app: estas guias estaban dos veces en Ariel, identicas.
+        pd.DataFrame({
+            "Nro guía": sorted(set(repetidas_identicas)),
+            "Aviso": "Ariel la traía repetida (fila idéntica): se contó una sola vez.",
+        }).to_excel(writer, sheet_name="REPETIDAS EN ARIEL", index=False)
 
 
 def write_jetsmart_liquidacion(guias: pd.DataFrame, resumen: dict, period: Period, output_path, cruce: dict | None = None) -> None:
@@ -397,4 +405,7 @@ def write_jetsmart_liquidacion(guias: pd.DataFrame, resumen: dict, period: Perio
         _write_cvlp_sheet(writer, resumen, period)
         _write_comisiones_inter_sheet(writer, resumen)
         if cruce is not None:
-            _write_cruce_sheets(writer, cruce["excepciones"], cruce["incluidas_ultimo_dia"])
+            _write_cruce_sheets(
+                writer, cruce["excepciones"], cruce["incluidas_ultimo_dia"],
+                (cruce.get("resumen") or {}).get("ariel_repetidas_identicas", ()),
+            )

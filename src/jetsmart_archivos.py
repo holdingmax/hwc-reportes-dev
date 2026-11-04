@@ -35,7 +35,7 @@ from src.config import (
     COL_JS_PRIORIDAD,
 )
 from src.jetsmart_builder import detect_jetsmart_period, load_jetsmart_export
-from src.jetsmart_cruce import _MES_ABREV, _find_sheet, _norm, _rewind, load_ariel, load_ariel_raw
+from src.jetsmart_cruce import _MES_ABREV, ArielLeido, _find_sheet, _norm, _rewind, leer_ariel, load_ariel
 from src.period_utils import Period, period_label
 
 TIPO_GUIAS = "guias_sistema"
@@ -161,10 +161,10 @@ def cargar_export(source, tipo: str) -> pd.DataFrame:
     return load_jetsmart_export(source)
 
 
-def cargar_ariel(source, tipo: str) -> tuple[pd.DataFrame, int]:
-    """Guias de Ariel: de la rendicion cruda (hoja Venta) o de la hoja ARIEL
-    del archivo de trabajo."""
-    return load_ariel_raw(source) if tipo == TIPO_ARIEL else load_ariel(source)
+def cargar_ariel(source, tipo: str) -> ArielLeido:
+    """Guias de Ariel (con lo descartado): de la rendicion cruda (hoja Venta)
+    o de la hoja ARIEL del archivo de trabajo."""
+    return leer_ariel(source, cruda=(tipo == TIPO_ARIEL))
 
 
 def detectar_archivo(source, nombre: str) -> ArchivoDetectado:
@@ -195,14 +195,21 @@ def _detectar(source, nombre: str, xls: pd.ExcelFile, hojas: list[str]) -> Archi
     # primero porque su hoja no tiene encabezado en la fila 1 y las demas
     # pruebas (que leen la primera fila) no la reconocerian.
     try:
-        ariel, anuladas = load_ariel_raw(source)
+        leido = leer_ariel(source, cruda=True)
     except ValueError:
-        ariel = None
-    if ariel is not None:
+        leido = None
+    if leido is not None:
+        ariel, anuladas = leido.guias, leido.anuladas
         # Las anuladas (Ariel reusa su numero para otra guia) no cuentan: se avisa para que el total cierre.
         notas = []
         if anuladas:
             notas.append("1 anulada, no se cuenta" if anuladas == 1 else f"{anuladas} anuladas, no se cuentan")
+        # Filas identicas repetidas: son la misma guia cargada dos veces; se cuentan una vez y se avisa.
+        if leido.repetidas_identicas:
+            n = len(leido.repetidas_identicas)
+            notas.append(
+                f"{n} {'fila repetida idéntica, se cuenta' if n == 1 else 'filas repetidas idénticas, se cuentan'} una sola vez"
+            )
         return ArchivoDetectado(
             nombre, TIPO_ARIEL, cantidad=int(ariel["Nro de guía"].nunique()),
             periodo=_periodo_por_fechas(ariel["Fecha de guia"]), notas=notas,
