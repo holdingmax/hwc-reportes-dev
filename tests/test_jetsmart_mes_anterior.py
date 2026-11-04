@@ -462,12 +462,32 @@ class PantallaConMesAnteriorGuardado(unittest.TestCase):
 
     @staticmethod
     def _textos(at):
-        return "\n".join([m.value for m in at.markdown] + [w.value for w in at.warning] + [e.value for e in at.error])
+        return "\n".join(
+            [m.value for m in at.markdown] + [s.value for s in at.success]
+            + [w.value for w in at.warning] + [e.value for e in at.error]
+        )
+
+    def test_aviso_verde_si_el_mes_anterior_ya_esta_guardado(self):
+        at = self._app([G_OCT, A_OCT])
+        verdes = [s.value for s in at.success]
+        self.assertEqual(len(verdes), 1)
+        self.assertIn("Septiembre 2026 ya está guardado, no hace falta subirlo", verdes[0])
+        self.assertIn("versión 2, cargado el 4/11", verdes[0])
+        self.assertNotIn("todavía no está guardado", self._textos(at))
+
+    def test_aviso_amarillo_si_falta_el_mes_anterior(self):
+        at = self._app([G_OCT, A_OCT], estado="sin_datos")
+        self.assertEqual([s.value for s in at.success], [])
+        amarillos = [w.value for w in at.warning if "todavía no está guardado" in w.value]
+        self.assertEqual(len(amarillos), 1)
+        self.assertIn("Septiembre 2026 todavía no está guardado", amarillos[0])
+        self.assertIn("las guías de septiembre 2026 y la rendición de Ariel de septiembre 2026", amarillos[0])
+        self.assertIn("Es una sola vez", amarillos[0])
 
     def test_muestra_version_y_fecha_y_no_pide_septiembre(self):
         at = self._app([G_OCT, A_OCT])
         texto = self._textos(at)
-        self.assertIn("Mes anterior: septiembre 2026, versión 2, cargado el 4/11", texto)
+        self.assertIn("versión 2, cargado el 4/11", texto)
         self.assertNotIn("Falta", texto)
         at.number_input[0].set_value(1485.0)
         at.run()

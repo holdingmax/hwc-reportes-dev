@@ -341,6 +341,8 @@ class ConjuntoJetSmart:
     # (los que subio la usuaria; se guardan al procesar) o None (falta).
     origen_mes_anterior: str | None = None
     mes_anterior: ResumenMesAnterior | None = None     # solo si origen_mes_anterior == "bd"
+    # La base responde pero ese mes nunca se guardo y no se subieron sus archivos (carga inicial).
+    mes_anterior_sin_guardar: bool = False
     avisos: list[str] = field(default_factory=list)    # no bloquean
     errores: list[str] = field(default_factory=list)   # archivos que no se pudieron usar
     faltantes: list[str] = field(default_factory=list)  # lo que falta para poder procesar
@@ -488,6 +490,7 @@ def armar_conjunto(
             )
         if c.export_anterior is None and c.ariel_anterior is None and lectura is not None and lectura.estado == "sin_datos":
             # Carga inicial: la base responde pero ese mes nunca se guardo.
+            c.mes_anterior_sin_guardar = True
             c.faltantes.append(
                 f"Todavía no tengo guardado {ant} en el sistema. Subí las guías de {ant} y la rendición de Ariel "
                 f"de {ant} (una sola vez: después quedan guardadas)."

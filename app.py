@@ -82,6 +82,7 @@ from src.jetsmart_mes_anterior import (
     ORIGEN_CARGA_INICIAL,
     ORIGEN_LIQUIDACION,
     MesAnteriorNoDisponible,
+    fecha_corta,
     filas_guias_periodo,
     frames_desde_filas,
 )
@@ -1059,7 +1060,21 @@ def _render_archivos_detectados(detectados: list, conjunto) -> None:
             st.markdown(f":material/check_circle: `{d.nombre}` — {d.resumen}")
         else:
             st.error(f"`{d.nombre}` — {d.problema}", icon=":material/error:")
-    if conjunto.mensaje_mes_anterior:
+    if conjunto.origen_mes_anterior == "bd" and conjunto.mes_anterior is not None:
+        m = conjunto.mes_anterior
+        st.success(
+            f"**{period_label(m.periodo).capitalize()} ya está guardado, no hace falta subirlo.** "
+            f"(versión {m.version}, cargado el {fecha_corta(m.creado_en)})",
+            icon=":material/check_circle:",
+        )
+    elif conjunto.mes_anterior_sin_guardar:
+        ant = period_label(conjunto.periodo_anterior)
+        st.warning(
+            f"**{ant.capitalize()} todavía no está guardado.** Subí junto con los demás archivos las guías de {ant} "
+            f"y la rendición de Ariel de {ant}. Es una sola vez: después queda guardado.",
+            icon=":material/upload_file:",
+        )
+    elif conjunto.mensaje_mes_anterior:
         st.markdown(f":material/history: {conjunto.mensaje_mes_anterior}")
     for aviso in conjunto.avisos:
         st.warning(aviso, icon=":material/info:")
