@@ -315,10 +315,14 @@ def _guardar(conn, meses):
         )
 
 
-def _mes(origen, n=2):
+def _mes(origen, n=2, sin_resultado=False):
+    """Mes de ejemplo para guardar. Una 'liquidacion' trae resultado en cada guia (es la regla);
+    la 'carga_inicial' no. sin_resultado=True arma el caso invalido para probar que se rechaza."""
+    con_resultado = origen == "liquidacion" and not sin_resultado
     filas = [
         {"fuente": FUENTE_SISTEMA, "nro_guia": i, "fecha": date(2026, 10, 1), "origen": "AEP", "kg": 1.5,
-         "ingreso": 100.0, "estado": "Entregada", "resultado": None, "motivo": None}
+         "ingreso": 100.0, "estado": "Entregada",
+         "resultado": "incluida" if con_resultado else None, "motivo": "match" if con_resultado else None}
         for i in range(n)
     ]
     return {"period": SEP if origen == "carga_inicial" else OCT, "origen_dato": origen, "filas": filas,

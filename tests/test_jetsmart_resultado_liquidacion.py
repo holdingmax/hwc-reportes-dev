@@ -89,7 +89,7 @@ class ValidacionDeResultados(unittest.TestCase):
 class GuardadoEnLaBaseExigeResultado(unittest.TestCase):
     def test_una_liquidacion_sin_resultado_no_se_escribe(self):
         conn = _Conexion(RESPUESTAS_GUARDAR)
-        r = _guardar(conn, [_mes("liquidacion")])   # _mes deja resultado en None
+        r = _guardar(conn, [_mes("liquidacion", sin_resultado=True)])
         # La liquidacion en si se guarda (como siempre); las guias del mes, no.
         self.assertEqual(r, {"liquidacion": True, "meses": False})
         self.assertFalse([e for e in conn.log if e[0] == "executemany"])
@@ -103,8 +103,6 @@ class GuardadoEnLaBaseExigeResultado(unittest.TestCase):
 
     def test_una_liquidacion_con_resultado_si_se_escribe(self):
         mes = _mes("liquidacion", 2)
-        for f in mes["filas"]:
-            f["resultado"], f["motivo"] = RES_INCLUIDA, "match"
         conn = _Conexion(RESPUESTAS_GUARDAR)
         self.assertEqual(_guardar(conn, [mes]), {"liquidacion": True, "meses": True})
         filas = next(e for e in conn.log if e[0] == "executemany")[2]
