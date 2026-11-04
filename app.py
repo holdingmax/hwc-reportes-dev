@@ -636,6 +636,22 @@ def _origen_vuelos(leido, cantidad: int) -> None:
         )
 
 
+def _control_total_vuelos(leido, cantidad: int, usd_por_vuelo: float) -> None:
+    """Compara cantidad x USD por vuelo con el total en USD que trae el Excel de
+    Ariel. Es solo un control: avisa, no bloquea ni cambia ningun valor."""
+    if leido is None or leido.total_usd is None:
+        return
+    calculado = cantidad * usd_por_vuelo
+    if abs(calculado - leido.total_usd) < 0.005:
+        st.caption(f":material/check_circle: Coincide con el total del Excel de Ariel ({_num_libre(leido.total_usd)} USD).")
+    else:
+        st.warning(
+            f"No coincide con el total del Excel de Ariel: acá da {_num_libre(calculado)} USD "
+            f"y el Excel dice {_num_libre(leido.total_usd)} USD. Revisá la cantidad y el importe por vuelo.",
+            icon=":material/warning:",
+        )
+
+
 def _money(value: float) -> str:
     return f"$ {_num(value)}"
 
@@ -1391,6 +1407,7 @@ with st.container(key="zona_carga"):
                     ))
                 _origen_vuelos(vuelos_ariel.get(station), vuelos_inter[station])
                 st.caption(_cuenta_vuelos(vuelos_inter[station], usd_por_vuelo[station]))
+                _control_total_vuelos(vuelos_ariel.get(station), vuelos_inter[station], usd_por_vuelo[station])
                 if vuelos_inter[station] > JETSMART_VUELOS_INTER_AVISO_CANTIDAD:
                     st.warning("¿Es la cantidad o el importe?", icon=":material/warning:")
 

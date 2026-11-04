@@ -35,6 +35,11 @@ def _textos(at: AppTest) -> str:
     return "\n".join([c.value for c in at.caption] + [w.value for w in at.warning])
 
 
+def _avisos_control(at: AppTest) -> list[str]:
+    """Avisos amarillos del control contra el total del Excel de Ariel (sin los de la base, que en los tests no hay)."""
+    return [w.value for w in at.warning if "total del Excel de Ariel" in w.value]
+
+
 def _subir(at: AppTest, *archivos: tuple[str, bytes]) -> AppTest:
     at.get("file_uploader")[0].set_value([(nombre, datos, XLSX) for nombre, datos in archivos])
     return at.run()
@@ -163,6 +168,43 @@ class VuelosDesdeElExcelDeAriel(unittest.TestCase):
         self.at.number_input(key="js_vuelos_EZE").set_value(12).run()
         self.assertEqual(self.at.number_input(key="js_vuelos_EZE").value, 12)
         self.assertNotIn("Excel de Ariel", _textos(self.at))
+    def test_control_coincide_con_el_total_del_excel(self):
+        _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
+        textos = _textos(self.at)
+        self.assertEqual(textos.count("Coincide con el total del Excel de Ariel"), 2)  # EZE 857,5 y MDZ 945
+        self.assertEqual(_avisos_control(self.at), [])
+
+    def test_control_que_no_coincide_avisa_con_los_dos_valores_y_no_bloquea(self):
+        _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
+        self.at.number_input(key="js_usd_EZE").set_value(20.0).run()  # 49 x 20 = 980, el Excel dice 857,5
+        avisos = _avisos_control(self.at)
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("980 USD", avisos[0])
+        self.assertIn("857,5 USD", avisos[0])
+        self.assertIn("No coincide con el total del Excel de Ariel", avisos[0])
+        # El otro total sigue coincidiendo, y no se toco ningun valor.
+        self.assertEqual(_textos(self.at).count("Coincide con el total del Excel de Ariel"), 1)
+        self.assertEqual(self.at.number_input(key="js_vuelos_EZE").value, 49)
+        self.assertEqual(len(self.at.exception), 0)
+
+    def test_control_sigue_a_la_cantidad_editada(self):
+        _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
+        self.at.number_input(key="js_vuelos_MDZ").set_value(26).run()  # 26 x 35 = 910, el Excel dice 945
+        avisos = _avisos_control(self.at)
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("910 USD", avisos[0])
+        self.assertIn("945 USD", avisos[0])
+
+    def test_sin_total_en_el_excel_no_hay_control(self):
+        _subir(self.at, (ARIEL_SEP.name, ARIEL_SEP.read_bytes()))  # EZE sin total en USD; MDZ 33 x 35 = 1155
+        self.assertEqual(_textos(self.at).count("Coincide con el total del Excel de Ariel"), 1)
+        self.assertEqual(_avisos_control(self.at), [])
+
+    def test_sin_excel_de_ariel_no_hay_control(self):
+        _subir(self.at, (GUIAS_OCT.name, GUIAS_OCT.read_bytes()))
+        self.at.number_input(key="js_vuelos_EZE").set_value(12).run()
+        self.assertNotIn("total del Excel de Ariel", _textos(self.at))
+
 
 
 if __name__ == "__main__":
