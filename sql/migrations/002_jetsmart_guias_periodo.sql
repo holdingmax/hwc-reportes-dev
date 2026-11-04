@@ -1,9 +1,8 @@
--- PROPUESTA (no aplicada): paso 5 -- el "mes anterior" de JetSmart se lee de la
+-- Migracion 002: paso 5 -- el "mes anterior" de JetSmart se lee de la
 -- base en vez de pedirle a Anita que suba otra vez los archivos del mes pasado.
 --
--- Estado: borrador para revision. Vive en sql/propuestas/ a proposito:
--- scripts/migrate.py aplica TODO lo que haya en sql/migrations/, asi que no se
--- mueve alla hasta que este aprobado. Solo base de Testing.
+-- Aprobada (4/11/2026). Se aplica con scripts/migrate.py; primero solo en la
+-- base de Testing.
 --
 -- Aditiva: no toca ninguna tabla existente (cargas_archivo, liquidaciones,
 -- movimientos_awb, ajustes_manuales, tarifas) ni los flujos de Avianca, Gol y
