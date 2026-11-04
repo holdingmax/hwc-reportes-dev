@@ -95,6 +95,7 @@ from src.jetsmart_builder import (
     unconfirmed_tarifa_activity,
     write_jetsmart_liquidacion,
 )
+from src.jetsmart_vuelos_ariel import leer_vuelos_ariel
 from src.loader import load_original
 from src.period_utils import extract_period, period_label, period_slug
 from src.report_builder import (
@@ -600,6 +601,39 @@ def _cuenta_vuelos(vuelos: int, usd_por_vuelo: float) -> str:
     """La cuenta de una estacion, en vivo: "49 vuelos × 17,5 USD = 857,5 USD"."""
     unidad = "vuelo" if vuelos == 1 else "vuelos"
     return f"{vuelos} {unidad} × {_num_libre(usd_por_vuelo)} USD = {_num_libre(vuelos * usd_por_vuelo)} USD"
+
+
+def _vuelos_del_ariel(archivo) -> dict:
+    """Vuelos que trae el Excel de Ariel por estacion. Cuando cambia el archivo
+    se precargan los campos de cantidad (con lo leido, o en 0 si no se pudo);
+    mientras sea el mismo, lo que Anita corrigio a mano no se pisa."""
+    huella = hashlib.sha256(archivo.getvalue()).hexdigest()
+    if st.session_state.get("js_vuelos_ariel_huella") != huella:
+        leidos = leer_vuelos_ariel(io.BytesIO(archivo.getvalue()))
+        st.session_state["js_vuelos_ariel_huella"] = huella
+        st.session_state["js_vuelos_ariel"] = leidos
+        for station in JETSMART_COMISION_INTER_USD_POR_VUELO:
+            leido = leidos.get(station)
+            st.session_state[f"js_vuelos_{station}"] = leido.cantidad if leido and leido.cantidad is not None else 0
+    return st.session_state["js_vuelos_ariel"]
+
+
+def _origen_vuelos(leido, cantidad: int) -> None:
+    """De donde salio la cantidad de una estacion (si salio del Excel de Ariel)."""
+    if leido is None:
+        return
+    if leido.cantidad is None:
+        st.warning(
+            f"No pude tomar los vuelos de {leido.estacion} del Excel de Ariel (hoja {leido.hoja}): {leido.problema} "
+            "Cargalos a mano.",
+            icon=":material/warning:",
+        )
+    elif cantidad == leido.cantidad:
+        st.caption(f":material/description: {leido.origen}")
+    else:
+        st.caption(
+            f":material/edit: Cambiaste la cantidad a mano: el Excel de Ariel (hoja {leido.hoja}) tenía {leido.cantidad}."
+        )
 
 
 def _money(value: float) -> str:
@@ -1336,7 +1370,11 @@ with st.container(key="zona_carga"):
     tipo_cambio, vuelos_inter, usd_por_vuelo = 0.0, {}, {}
     if es_jetsmart_sel:
         with st.container(border=True, key="card_datos"):
-            _step(3, "Completá los datos del período", "No vienen en ningún archivo: salen del tipo de cambio del mes y de los manifiestos.")
+            _step(
+                3, "Completá los datos del período",
+                "El tipo de cambio no viene en ningún archivo. Los vuelos se toman del Excel de Ariel si trae los manifiestos; podés corregirlos.",
+            )
+            vuelos_ariel = _vuelos_del_ariel(fuentes[id(conjunto.ariel_mes)]) if conjunto.ariel_mes is not None else {}
             tipo_cambio = st.number_input("Tipo de cambio del período (ARS por USD)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
             for station, usd_default in JETSMART_COMISION_INTER_USD_POR_VUELO.items():
                 st.markdown(f"**Vuelos internacionales {station}**")
@@ -1344,13 +1382,14 @@ with st.container(key="zona_carga"):
                 with col_cant:
                     # Entera: no hay medio vuelo.
                     vuelos_inter[station] = int(st.number_input(
-                        "Cantidad de vuelos", min_value=0, value=0, step=1, key=f"js_vuelos_{station}",
+                        "Cantidad de vuelos", min_value=0, step=1, key=f"js_vuelos_{station}",
                     ))
                 with col_usd:
                     usd_por_vuelo[station] = float(st.number_input(
                         "USD por vuelo", min_value=0.0, value=float(usd_default), step=0.5, format="%.2f",
                         key=f"js_usd_{station}",
                     ))
+                _origen_vuelos(vuelos_ariel.get(station), vuelos_inter[station])
                 st.caption(_cuenta_vuelos(vuelos_inter[station], usd_por_vuelo[station]))
                 if vuelos_inter[station] > JETSMART_VUELOS_INTER_AVISO_CANTIDAD:
                     st.warning("¿Es la cantidad o el importe?", icon=":material/warning:")
