@@ -33,6 +33,7 @@ Render.
 """
 
 import base64
+import hashlib
 import io
 import os
 
@@ -57,6 +58,7 @@ from src.db import (
     obtener_detalle_totales,
     obtener_filtros_historial,
     obtener_historial,
+    obtener_mes_anterior_jetsmart,
     obtener_movimientos_de_carga,
 )
 from src.liquidacion_builder import (
@@ -67,12 +69,22 @@ from src.liquidacion_builder import (
     write_liquidacion,
 )
 from src.jetsmart_archivos import (
+    ArchivosIncompletos,
     armar_conjunto,
     cargar_ariel,
     cargar_export,
     detectar_archivo,
 )
 from src.jetsmart_cruce import EXC_DIFERENCIA, cruzar_jetsmart
+from src.jetsmart_mes_anterior import (
+    FUENTE_ARIEL,
+    FUENTE_SISTEMA,
+    ORIGEN_CARGA_INICIAL,
+    ORIGEN_LIQUIDACION,
+    MesAnteriorNoDisponible,
+    filas_guias_periodo,
+    frames_desde_filas,
+)
 from src.jetsmart_builder import (
     build_jetsmart_guias,
     build_jetsmart_resumen,
@@ -1047,6 +1059,8 @@ def _render_archivos_detectados(detectados: list, conjunto) -> None:
             st.markdown(f":material/check_circle: `{d.nombre}` — {d.resumen}")
         else:
             st.error(f"`{d.nombre}` — {d.problema}", icon=":material/error:")
+    if conjunto.mensaje_mes_anterior:
+        st.markdown(f":material/history: {conjunto.mensaje_mes_anterior}")
     for aviso in conjunto.avisos:
         st.warning(aviso, icon=":material/info:")
 
@@ -1061,9 +1075,22 @@ def _requisitos_jetsmart(c, hay_archivos: bool, tipo_cambio: float) -> list[tupl
         (c.export_anterior, c.periodo_anterior), (c.ariel_anterior, c.periodo_anterior),
     ]
     requisitos = [(f"{a.etiqueta} de {period_label(p)}", True) for a, p in roles if a is not None]
+    if c.mensaje_mes_anterior and c.origen_mes_anterior == "bd":
+        # El mes anterior viene de la base: no hay nada que subir.
+        requisitos.append((c.mensaje_mes_anterior, True))
     requisitos += [(f, False) for f in c.faltantes]
     requisitos.append(("Cargar el tipo de cambio", tipo_cambio > 0))
     return requisitos
+
+
+def _info_archivos(fuentes: dict, export, ariel) -> list[dict]:
+    """Archivos de origen de un mes (nombre, hash y tipo), para guardarlos en la base y
+    poder rastrear de donde salio cada mes. Un mismo archivo puede cubrir los dos roles."""
+    info = []
+    for detectado, tipo in ((export, FUENTE_SISTEMA), (ariel, FUENTE_ARIEL)):
+        archivo = fuentes[id(detectado)]
+        info.append({"nombre": archivo.name, "hash": hashlib.sha256(archivo.getvalue()).hexdigest(), "tipo": tipo})
+    return info
 
 
 def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_inter: dict[str, int]) -> tuple[object, tuple[str, str]]:
@@ -1079,6 +1106,9 @@ def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_
     def leer_ariel(detectado):
         return cargar_ariel(fuentes[id(detectado)], detectado.tipo)
 
+    if not conjunto.listo:
+        raise ArchivosIncompletos(conjunto.faltantes)
+
     with st.spinner("Cruzando con Ariel y generando liquidación..."):
         export = leer_export(conjunto.export_mes)
         # El mes de la liquidacion es el de Ariel (mes de vuelo): lo que se
@@ -1087,13 +1117,39 @@ def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_
         _, otros_meses = detect_jetsmart_period(export)
         ariel_leido = leer_ariel(conjunto.ariel_mes)
         ariel = ariel_leido.guias
-        export_anterior = leer_export(conjunto.export_anterior)
-        ariel_anterior = leer_ariel(conjunto.ariel_anterior).guias
         export_siguiente = leer_export(conjunto.export_siguiente) if conjunto.export_siguiente is not None else None
+
+        # Mes anterior: la version vigente guardada en la base, o (carga inicial / correccion) los
+        # archivos que subio la usuaria, que se guardan como una version nueva de ese mes.
+        meses_a_guardar = []
+        if conjunto.origen_mes_anterior == "bd":
+            lectura = obtener_mes_anterior_jetsmart(conjunto.periodo_anterior, con_guias=True)
+            if lectura.estado != "ok":
+                raise MesAnteriorNoDisponible(conjunto.periodo_anterior)
+            export_anterior, ariel_anterior = frames_desde_filas(lectura.filas)
+            mensaje_mes_anterior = lectura.resumen.texto  # la version que realmente se uso
+        else:
+            ariel_ant_leido = leer_ariel(conjunto.ariel_anterior)
+            export_anterior, ariel_anterior = leer_export(conjunto.export_anterior), ariel_ant_leido.guias
+            mensaje_mes_anterior = conjunto.mensaje_mes_anterior
+            meses_a_guardar.append({
+                "period": conjunto.periodo_anterior, "origen_dato": ORIGEN_CARGA_INICIAL,
+                # Ese mes no se cruzo aca (se liquido fuera del sistema): sin resultado por guia.
+                "filas": filas_guias_periodo(export_anterior, ariel_anterior, None),
+                "archivos": _info_archivos(fuentes, conjunto.export_anterior, conjunto.ariel_anterior),
+                "repetidas": len(ariel_ant_leido.repetidas_identicas),
+            })
+
         resultado = cruzar_jetsmart(
             export, ariel, period, export_anterior, ariel_anterior, export_siguiente,
             ariel_repetidas_identicas=ariel_leido.repetidas_identicas,
         )
+        meses_a_guardar.append({
+            "period": period, "origen_dato": ORIGEN_LIQUIDACION,
+            "filas": filas_guias_periodo(export, ariel, resultado.destinos),
+            "archivos": _info_archivos(fuentes, conjunto.export_mes, conjunto.ariel_mes),
+            "repetidas": len(ariel_leido.repetidas_identicas),
+        })
 
         guias = build_jetsmart_guias(resultado.incluidas)
         resumen = build_jetsmart_resumen(guias, tipo_cambio, vuelos_inter)
@@ -1108,7 +1164,7 @@ def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_
         buffer.seek(0)
 
         archivo_mes = fuentes[id(conjunto.export_mes)]
-        guardar_liquidacion_jetsmart(
+        guardado = guardar_liquidacion_jetsmart(
             nombre_archivo=archivo_mes.name,
             file_bytes=archivo_mes.getvalue(),
             period=period,
@@ -1122,9 +1178,19 @@ def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_
                 "excepciones": resultado.excepciones.astype(object).where(resultado.excepciones.notna(), None).to_dict(orient="records"),
                 "incluidas_ultimo_dia": resultado.incluidas_ultimo_dia.to_dict(orient="records"),
             },
+            meses=meses_a_guardar,
         )
 
     _render_exito("jetsmart", period, buffer)
+    st.markdown(f":material/history: {mensaje_mes_anterior}")
+    if guardado["liquidacion"] and not guardado["meses"]:
+        # La liquidacion quedo guardada, pero las guias del mes no: el mes que viene habria que volver a subirlas.
+        st.warning(
+            f"La liquidación se guardó, pero no pude guardar las guías de {period_label(period)} para el mes que viene. "
+            "El mes que viene vas a tener que subir de nuevo las guías y la rendición de Ariel de este mes. "
+            "Avisale a sistemas.",
+            icon=":material/warning:",
+        )
     vuelos_txt = ", ".join(f"{station} {n}" for station, n in vuelos_inter.items())
     st.caption(
         f"Período detectado: {period_label(period)} · {len(guias)} guías · "
@@ -1221,7 +1287,7 @@ with st.container(key="zona_carga"):
             )
             detectados = [_detectar_jetsmart(f.name, f.getvalue()) for f in archivos_js]
             fuentes = {id(d): f for d, f in zip(detectados, archivos_js)}
-            conjunto = armar_conjunto(detectados)
+            conjunto = armar_conjunto(detectados, leer_mes_anterior=obtener_mes_anterior_jetsmart)
             _render_archivos_detectados(detectados, conjunto)
         else:
             # Etiqueta fija + key: si cambia la aerolinea, el archivo ya subido
@@ -1326,6 +1392,17 @@ with st.container(key="zona_carga"):
                             ]),
                             unsafe_allow_html=True,
                         )
+            except ArchivosIncompletos as faltan:
+                st.error(
+                    "**Todavía no se puede procesar:** " + " ".join(faltan.faltantes),
+                    icon=":material/error:",
+                )
+            except MesAnteriorNoDisponible:
+                st.error(
+                    "**No pude leer del sistema el mes anterior guardado.** Probá de nuevo en un momento, o subí "
+                    "las guías y la rendición de Ariel del mes anterior junto con los demás archivos.",
+                    icon=":material/error:",
+                )
             except Exception as exc:  # el detalle tecnico va aparte, chico
                 if airline_cfg.get("flow") == FLOW_JETSMART:
                     # Los archivos ya se reconocieron antes de llegar aca: si igual falla, es algo

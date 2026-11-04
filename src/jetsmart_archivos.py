@@ -19,6 +19,7 @@ Reglas de este modulo (todas por motivo de negocio, ver comentarios):
 - Solo lee: no guarda nada ni toca la base.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -36,6 +37,7 @@ from src.config import (
 )
 from src.jetsmart_builder import detect_jetsmart_period, load_jetsmart_export
 from src.jetsmart_cruce import _MES_ABREV, ArielLeido, _find_sheet, _norm, _rewind, leer_ariel, load_ariel
+from src.jetsmart_mes_anterior import LecturaMesAnterior, ResumenMesAnterior
 from src.period_utils import Period, period_label
 
 TIPO_GUIAS = "guias_sistema"
@@ -314,6 +316,16 @@ def _desde_orden(n: int) -> Period:
     return (_MES_ABREV[n % 12], f"{n // 12:02d}")
 
 
+class ArchivosIncompletos(Exception):
+    """Se pidio procesar sin que esten todos los archivos (ej. el clic llego
+    despues de que la base dejo de responder y el mes anterior ya no se
+    encontro). Lleva los faltantes, ya redactados para la usuaria."""
+
+    def __init__(self, faltantes: list[str]):
+        super().__init__(" ".join(faltantes))
+        self.faltantes = faltantes
+
+
 @dataclass
 class ConjuntoJetSmart:
     periodo: Period | None = None
@@ -325,6 +337,10 @@ class ConjuntoJetSmart:
     export_siguiente: ArchivoDetectado | None = None   # opcional: confirma las guias del ultimo dia
     listado: ArchivoDetectado | None = None            # reservado: control contra AFIP (aun no se usa)
     libro_iva: ArchivoDetectado | None = None          # reservado: control contra AFIP (aun no se usa)
+    # De donde sale el mes anterior: "bd" (version guardada en la base), "archivos"
+    # (los que subio la usuaria; se guardan al procesar) o None (falta).
+    origen_mes_anterior: str | None = None
+    mes_anterior: ResumenMesAnterior | None = None     # solo si origen_mes_anterior == "bd"
     avisos: list[str] = field(default_factory=list)    # no bloquean
     errores: list[str] = field(default_factory=list)   # archivos que no se pudieron usar
     faltantes: list[str] = field(default_factory=list)  # lo que falta para poder procesar
@@ -332,6 +348,18 @@ class ConjuntoJetSmart:
     @property
     def listo(self) -> bool:
         return not self.faltantes
+
+    @property
+    def mensaje_mes_anterior(self) -> str | None:
+        """Linea para la pantalla: de donde sale el mes anterior y que version."""
+        if self.origen_mes_anterior == "bd" and self.mes_anterior is not None:
+            return self.mes_anterior.texto
+        if self.origen_mes_anterior == "archivos":
+            return (
+                f"Mes anterior: {period_label(self.periodo_anterior)}, tomado de los archivos que subiste "
+                "(se guarda para que el mes que viene no haga falta subirlo)"
+            )
+        return None
 
 
 def _mejor(candidatos: list[tuple[int, ArchivoDetectado]], prio: dict[str, int]):
@@ -344,7 +372,10 @@ def _mejor(candidatos: list[tuple[int, ArchivoDetectado]], prio: dict[str, int])
     return elegido, repetidos
 
 
-def armar_conjunto(archivos: list[ArchivoDetectado]) -> ConjuntoJetSmart:
+def armar_conjunto(
+    archivos: list[ArchivoDetectado],
+    leer_mes_anterior: Callable[[Period], LecturaMesAnterior] | None = None,
+) -> ConjuntoJetSmart:
     """Asigna cada archivo reconocido a su rol y dice que falta, todo en
     lenguaje de negocio.
 
@@ -352,7 +383,15 @@ def armar_conjunto(archivos: list[ArchivoDetectado]) -> ConjuntoJetSmart:
     liquidacion: lo que declara es lo que se liquida; las guias del sistema
     se crean por mes de creacion y pueden incluir el mes siguiente). Sin
     ningun Ariel, el de las guias mas recientes.
-    El mes anterior se pide aca hasta que se lea de la base de datos.
+
+    Mes anterior: se lee de la base (leer_mes_anterior(periodo) -> LecturaMesAnterior,
+    la version vigente de ese mes) y NO se pide subir de nuevo. Solo si la base no
+    lo tiene (primer uso, "carga inicial") o no se puede consultar, hay que subir
+    las guias y la rendicion de Ariel del mes anterior. Si la usuaria sube los dos
+    archivos completos del mes anterior, se usan esos (es la forma de corregir un
+    mes ya guardado) y al procesar quedan como una version nueva. Con uno solo de
+    los dos no alcanza para reemplazar: se ignora y se avisa, porque mezclar un
+    archivo nuevo con uno guardado daria un mes anterior inconsistente.
     """
     c = ConjuntoJetSmart()
     reconocidos = [(i, a) for i, a in enumerate(archivos) if a.reconocido]
@@ -402,6 +441,25 @@ def armar_conjunto(archivos: list[ArchivoDetectado]) -> ConjuntoJetSmart:
     c.ariel_anterior = rol(ariels, c.periodo_anterior, _PRIO_ARIEL)
     c.export_siguiente = rol(exports, siguiente, _PRIO_EXPORT)
 
+    lectura = leer_mes_anterior(c.periodo_anterior) if leer_mes_anterior is not None else None
+    guardado = lectura.resumen if lectura is not None and lectura.estado == "ok" else None
+    if c.export_anterior is not None and c.ariel_anterior is not None:
+        c.origen_mes_anterior = "archivos"
+        if guardado is not None:
+            c.avisos.append(
+                f"Usé los archivos de {ant} que subiste, en lugar de la versión {guardado.version} guardada. "
+                "Al procesar quedan guardados como una versión nueva."
+            )
+    elif guardado is not None:
+        c.origen_mes_anterior, c.mes_anterior = "bd", guardado
+        for a in (c.export_anterior, c.ariel_anterior):
+            if a is not None:
+                c.avisos.append(
+                    f"No usé {a.nombre}: ya tengo guardado {ant} (versión {guardado.version}). Para reemplazarlo, "
+                    f"subí juntas las guías y la rendición de Ariel de {ant}."
+                )
+        c.export_anterior = c.ariel_anterior = None
+
     if c.export_mes is not None and c.export_mes.tipo == TIPO_LISTADO:
         c.avisos.append(
             "Estoy usando el listado de facturación como guías del mes. Solo trae las guías ya facturadas: "
@@ -422,8 +480,21 @@ def armar_conjunto(archivos: list[ArchivoDetectado]) -> ConjuntoJetSmart:
         )
     if c.ariel_mes is None:
         c.faltantes.append(f"Falta la rendición de Ariel de {mes} (el Excel que te manda Ariel).")
-    if c.export_anterior is None:
-        c.faltantes.append(f"Falta el mes anterior: subí las guías de {ant} (el archivo del sistema de ese mes).")
-    if c.ariel_anterior is None:
-        c.faltantes.append(f"Falta el mes anterior: subí la rendición de Ariel de {ant}.")
+    if c.origen_mes_anterior is None:
+        if lectura is not None and lectura.estado == "sin_base":
+            c.avisos.append(
+                "No pude consultar la base de datos para buscar el mes anterior guardado: por ahora subí "
+                "los archivos del mes anterior."
+            )
+        if c.export_anterior is None and c.ariel_anterior is None and lectura is not None and lectura.estado == "sin_datos":
+            # Carga inicial: la base responde pero ese mes nunca se guardo.
+            c.faltantes.append(
+                f"Todavía no tengo guardado {ant} en el sistema. Subí las guías de {ant} y la rendición de Ariel "
+                f"de {ant} (una sola vez: después quedan guardadas)."
+            )
+        else:
+            if c.export_anterior is None:
+                c.faltantes.append(f"Falta el mes anterior: subí las guías de {ant} (el archivo del sistema de ese mes).")
+            if c.ariel_anterior is None:
+                c.faltantes.append(f"Falta el mes anterior: subí la rendición de Ariel de {ant}.")
     return c

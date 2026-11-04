@@ -93,6 +93,12 @@ EXC_REVISION = "Solo en Ariel, sin confirmar — revisión manual"
 EXC_DOBLE = "Declarada también en el Ariel del mes anterior — revisión manual"
 EXC_DUPLICADA = "Número de guía repetido en Ariel — revisión manual"
 
+# Que paso con cada guia en el cruce (se guarda en la base: ver db.py).
+RES_INCLUIDA = "incluida"      # entro a la liquidacion
+RES_PENDIENTE = "pendiente"    # esta en el sistema pero Ariel todavia no la declaro
+RES_EXCLUIDA = "excluida"      # quedo afuera (doble declaracion, sin confirmar, repetida, ya declarada)
+MOTIVO_YA_DECLARADA = "Ya declarada el mes anterior"
+
 # Motivos de inclusion (para el resumen y el aviso de la regla de ultimo dia).
 INC_MATCH = "match"
 INC_DIFERENCIA = "diferencia (valores de Ariel)"
@@ -278,6 +284,10 @@ class CruceResultado:
     # Guias incluidas por la regla de ultimo dia (aviso visible).
     incluidas_ultimo_dia: pd.DataFrame
     resumen: dict = field(default_factory=dict)
+    # {nro de guia: (resultado, motivo)} para TODAS las guias de las dos
+    # fuentes, no solo las excepciones: el mes siguiente necesita saber que
+    # paso con cada una (ver db.guardar_liquidacion_jetsmart).
+    destinos: dict[int, tuple[str, str]] = field(default_factory=dict)
 
 
 _EXC_COLUMNS = ["Tipo", "Nro guía", "Fecha Ariel", "Origen", "Kg export", "Kg Ariel",
@@ -320,8 +330,12 @@ def cruzar_jetsmart(
     incluidas, excepciones, ultimo_dia_rows = [], [], []
     motivos: dict[str, int] = {}
     ya_declaradas = 0
+    destinos: dict[int, tuple[str, str]] = {}
 
     def excepcion(tipo, g, a=None, e=None, entra="No", detalle=""):
+        # Una "diferencia de Kg/ingreso" SI entra (ya quedo como incluida); el resto, no.
+        if int(g) not in destinos:
+            destinos[int(g)] = (RES_PENDIENTE if tipo == EXC_PENDIENTE else RES_EXCLUIDA, tipo)
         excepciones.append({
             "Tipo": tipo,
             "Nro guía": int(g),
@@ -336,6 +350,7 @@ def cruzar_jetsmart(
         })
 
     def incluir(g, a, e, motivo):
+        destinos[int(g)] = (RES_INCLUIDA, motivo)
         motivos[motivo] = motivos.get(motivo, 0) + 1
         incluidas.append({
             COL_JS_CREACION: (e[COL_JS_CREACION] if e is not None
@@ -373,6 +388,7 @@ def cruzar_jetsmart(
                 excepcion(EXC_DUPLICADA, g, None, e, detalle="Ariel trae este número más de una vez (sin contar anuladas).")
             elif g in prev_ariel:
                 ya_declaradas += 1
+                destinos[int(g)] = (RES_EXCLUIDA, MOTIVO_YA_DECLARADA)
             else:
                 excepcion(EXC_PENDIENTE, g, None, e, detalle="No está en el Ariel de este mes ni del anterior: probablemente se declare el mes que viene.")
         else:
@@ -420,4 +436,5 @@ def cruzar_jetsmart(
         excepciones=exc_df,
         incluidas_ultimo_dia=pd.DataFrame(ultimo_dia_rows, columns=["Nro guía", "Fecha Ariel", "Origen", "Kg Ariel", "Ingreso Ariel"]),
         resumen=resumen,
+        destinos=destinos,
     )

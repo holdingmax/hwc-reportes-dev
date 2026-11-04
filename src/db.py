@@ -53,6 +53,7 @@ from src.config import (
     COL_TRANS_E,
     LATAM_LIQUIDACION_STATION,
 )
+from src.jetsmart_mes_anterior import LecturaMesAnterior, ResumenMesAnterior
 from src.period_utils import Period, detect_period, excluded_by_period
 
 load_dotenv()
@@ -208,7 +209,9 @@ def _guardar_liquidacion(
     cantidad_filas: int,
     monto_total: float | None,
     detalle_totales: dict | None = None,
-) -> None:
+) -> int:
+    """Inserta la liquidacion y devuelve su id (los llamadores que no lo
+    necesitan lo ignoran)."""
     periodo_mes, periodo_anio = period
     with conn.cursor() as cur:
         cur.execute(
@@ -217,6 +220,7 @@ def _guardar_liquidacion(
                 (carga_id, aerolinea, estacion, tipo_cargo, periodo_mes, periodo_anio,
                  periodo, cantidad_filas, monto_total, detalle_totales)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 carga_id, aerolinea, estacion, tipo_cargo, periodo_mes, periodo_anio,
@@ -224,6 +228,7 @@ def _guardar_liquidacion(
                 Json(_jsonable(detalle_totales)) if detalle_totales is not None else None,
             ),
         )
+        return cur.fetchone()[0]
 
 
 def _parse_sheet_name(sheet_name: str, airline_key: str) -> tuple[str, str]:
@@ -323,7 +328,8 @@ def guardar_liquidacion_jetsmart(
     resumen: dict,
     parametros: dict,
     cruce: dict | None = None,
-) -> None:
+    meses: list[dict] | None = None,
+) -> dict:
     """Persiste la carga del export de JetSmart mas una liquidacion
     'jetsmart_liquidacion' (estacion "AR": es una liquidacion nacional).
 
@@ -338,12 +344,24 @@ def guardar_liquidacion_jetsmart(
 
     monto_total = "Total collections to be delivered to WCS".
 
-    No lanza excepciones, igual que el resto de las funciones de guardado.
+    meses: guias de cada mes a guardar para que el mes siguiente las lea de la
+    base (ver jetsmart_mes_anterior.py). Cada item: {"period", "origen_dato"
+    ('liquidacion' o 'carga_inicial'), "filas", "archivos", "repetidas"}. El
+    de origen 'liquidacion' queda ligado a la liquidacion recien guardada.
+    Se guardan en un SAVEPOINT aparte: si esas tablas todavia no existen o
+    fallan, la liquidacion se guarda igual (como siempre).
+
+    Devuelve {"liquidacion": bool, "meses": bool} para que la pantalla pueda
+    avisar si no se guardaron las guias del mes (el proximo mes habria que
+    volver a subir los archivos). No lanza excepciones, igual que el resto de
+    las funciones de guardado.
     """
+    resultado = {"liquidacion": False, "meses": False}
     try:
         conn = _get_connection()
         if conn is None:
-            return
+            return resultado
+        meses_ok = True
         archivo_hash = hashlib.sha256(file_bytes).hexdigest()
         periodo_mes, periodo_anio = period
         with conn.transaction():
@@ -372,12 +390,108 @@ def guardar_liquidacion_jetsmart(
                 "cruce": cruce,
                 "guias": guias.astype(object).where(guias.notna(), None).to_dict(orient="records"),
             }
-            _guardar_liquidacion(
+            liquidacion_id = _guardar_liquidacion(
                 conn, carga_id, "jetsmart", "AR", "jetsmart_liquidacion",
                 period, len(guias), resumen.get("total_wcs"), detalle_totales,
             )
+            try:
+                with conn.transaction():  # savepoint: un fallo aca no tira abajo la liquidacion
+                    for mes in meses or []:
+                        _guardar_mes_jetsmart(conn, mes, liquidacion_id)
+            except Exception:
+                meses_ok = False
+        resultado = {"liquidacion": True, "meses": meses_ok}
     except Exception:
         _get_connection.clear()
+    return resultado
+
+
+def _guardar_mes_jetsmart(conn: psycopg.Connection, mes: dict, liquidacion_id: int) -> None:
+    """Una version nueva del mes (jetsmart_periodos) con todas sus guias
+    (jetsmart_guias_periodo). Nunca pisa una version anterior: rehacer un mes
+    agrega la version siguiente; la vigente es la de mayor numero."""
+    periodo = _period_to_date(mes["period"])
+    es_liquidacion = mes["origen_dato"] == "liquidacion"
+    with conn.cursor() as cur:
+        cur.execute("SELECT COALESCE(MAX(version), 0) + 1 FROM jetsmart_periodos WHERE periodo = %s", (periodo,))
+        version = cur.fetchone()[0]
+        cur.execute(
+            """
+            INSERT INTO jetsmart_periodos
+                (periodo, version, origen_dato, liquidacion_id, archivos, ariel_repetidas_identicas)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (periodo, version, mes["origen_dato"], liquidacion_id if es_liquidacion else None,
+             Json(mes.get("archivos") or []), int(mes.get("repetidas") or 0)),
+        )
+        periodo_id = cur.fetchone()[0]
+        cur.executemany(
+            """
+            INSERT INTO jetsmart_guias_periodo
+                (periodo_id, fuente, nro_guia, fecha, origen, kg, ingreso, estado, resultado, motivo)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            [
+                (periodo_id, f["fuente"], f["nro_guia"], f["fecha"], f["origen"], f["kg"], f["ingreso"],
+                 f["estado"], f["resultado"], f["motivo"])
+                for f in mes["filas"]
+            ],
+        )
+
+
+def _float_o_none(value) -> float | None:
+    return None if value is None else float(value)
+
+
+def obtener_mes_anterior_jetsmart(period: Period, con_guias: bool = False) -> LecturaMesAnterior:
+    """Version vigente (la de mayor numero) del mes `period` guardada en
+    jetsmart_periodos. Solo lectura, fail-soft como el resto del modulo.
+
+    con_guias=False trae solo el resumen (version, fecha de carga, cantidades:
+    barato, para mostrarlo en pantalla); con_guias=True trae ademas las filas
+    de las dos fuentes, para armar el cruce.
+
+    estado 'sin_base' = la base no esta configurada o no responde (no es lo
+    mismo que 'sin_datos': que la base responda pero ese mes no este cargado).
+    """
+    try:
+        conn = _get_connection()
+        if conn is None:
+            return LecturaMesAnterior("sin_base")
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, version, creado_en, origen_dato FROM jetsmart_periodo_vigente WHERE periodo = %s",
+                (_period_to_date(period),),
+            )
+            fila = cur.fetchone()
+            if fila is None:
+                return LecturaMesAnterior("sin_datos")
+            periodo_id, version, creado_en, origen_dato = fila
+            cur.execute(
+                "SELECT fuente, COUNT(*) FROM jetsmart_guias_periodo WHERE periodo_id = %s GROUP BY fuente",
+                (periodo_id,),
+            )
+            cuentas = dict(cur.fetchall())
+            filas: list[dict] = []
+            if con_guias:
+                columnas = ["fuente", "nro_guia", "fecha", "origen", "kg", "ingreso", "estado", "resultado", "motivo"]
+                cur.execute(
+                    "SELECT " + ", ".join(columnas) + " FROM jetsmart_guias_periodo WHERE periodo_id = %s",
+                    (periodo_id,),
+                )
+                for registro in cur.fetchall():
+                    f = dict(zip(columnas, registro))
+                    f["kg"], f["ingreso"] = _float_o_none(f["kg"]), _float_o_none(f["ingreso"])
+                    filas.append(f)
+        resumen = ResumenMesAnterior(
+            periodo=period, version=version, creado_en=creado_en, origen_dato=origen_dato,
+            n_sistema=int(cuentas.get("sistema", 0)), n_ariel=int(cuentas.get("ariel", 0)),
+        )
+        return LecturaMesAnterior("ok", resumen, filas)
+    except Exception:
+        _get_connection.clear()
+        return LecturaMesAnterior("sin_base")
 
 
 def obtener_detalle_totales(liquidacion_id: int) -> dict | None:
