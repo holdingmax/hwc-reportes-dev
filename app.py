@@ -66,19 +66,17 @@ from src.liquidacion_builder import (
     detect_unconfirmed_station_activity,
     write_liquidacion,
 )
-from src.jetsmart_cruce import (
-    EXC_DIFERENCIA,
-    cruzar_jetsmart,
-    has_ariel_raw_file,
-    has_ariel_sheet,
-    load_ariel,
-    load_ariel_raw,
+from src.jetsmart_archivos import (
+    armar_conjunto,
+    cargar_ariel,
+    cargar_export,
+    detectar_archivo,
 )
+from src.jetsmart_cruce import EXC_DIFERENCIA, cruzar_jetsmart
 from src.jetsmart_builder import (
     build_jetsmart_guias,
     build_jetsmart_resumen,
     detect_jetsmart_period,
-    load_jetsmart_export,
     unconfirmed_tarifa_activity,
     write_jetsmart_liquidacion,
 )
@@ -736,10 +734,12 @@ def _archivo_hint(airline_key: str | None) -> str:
     if airline_key is None:
         return "Primero elegí la aerolínea: según cuál sea, cambia el archivo que hay que subir."
     if AIRLINE_CONFIGS[airline_key].get("flow") == FLOW_JETSMART:
+        # Palabras de Anita, sin nombres internos de hojas ni de archivos de trabajo.
         return (
-            "El <b>archivo de trabajo del mes</b> (LIQUIDACION ECS): la hoja BD con el export de guías "
-            "primero y la hoja ARIEL con el archivo de Ariel. Si todavía no armaste la hoja ARIEL, subilo "
-            "igual: te va a pedir la rendición original de Ariel."
+            "Subí <b>todos los archivos juntos, en cualquier orden</b>: las <b>guías del mes</b> (las que bajás del "
+            "sistema, Consulta de guías, todo el mes) y la <b>rendición de Ariel</b>; y lo mismo del <b>mes anterior</b>. "
+            "Si tenés el <b>listado de facturación</b> o el <b>Libro IVA de AFIP</b>, subilos también. "
+            "Yo reconozco cuál es cada uno."
         )
     return "El <b>export del sistema</b> (archivo original.xlsx), tal como sale, sin editar."
 
@@ -1014,27 +1014,64 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
             )
 
 
-def _render_jetsmart_result(
-    uploaded_file, tipo_cambio: float, vuelos_inter: dict[str, int], archivo_anterior, export_siguiente_file,
-    ariel_mes_crudo=None, ariel_anterior_crudo=None,
-) -> tuple[object, tuple[str, str]]:
+@st.cache_data(show_spinner=False)
+def _detectar_jetsmart(nombre: str, datos: bytes):
+    """Reconoce que es cada archivo subido. Se cachea porque Streamlit vuelve
+    a correr toda la pagina en cada interaccion y releer los Excel cada vez
+    seria lento."""
+    return detectar_archivo(io.BytesIO(datos), nombre)
+
+
+def _render_archivos_detectados(detectados: list, conjunto) -> None:
+    """Debajo de la zona de carga: que reconocio de cada archivo (o por que no
+    lo pudo usar) y los avisos del conjunto. Todo en lenguaje de negocio."""
+    for d in detectados:
+        if d.reconocido:
+            st.markdown(f":material/check_circle: `{d.nombre}` — {d.resumen}")
+        else:
+            st.error(f"`{d.nombre}` — {d.problema}", icon=":material/error:")
+    for aviso in conjunto.avisos:
+        st.warning(aviso, icon=":material/info:")
+
+
+def _requisitos_jetsmart(c, hay_archivos: bool, tipo_cambio: float) -> list[tuple[str, bool]]:
+    """Checklist de JetSmart: lo que ya esta (con el mes) y lo que falta, con
+    las palabras de Anita. Los faltantes ya vienen redactados por armar_conjunto."""
+    if not hay_archivos:
+        return [("Subir las guías del mes y la rendición de Ariel (y las del mes anterior)", False)]
+    roles = [
+        (c.export_mes, c.periodo), (c.ariel_mes, c.periodo),
+        (c.export_anterior, c.periodo_anterior), (c.ariel_anterior, c.periodo_anterior),
+    ]
+    requisitos = [(f"{a.etiqueta} de {period_label(p)}", True) for a, p in roles if a is not None]
+    requisitos += [(f, False) for f in c.faltantes]
+    requisitos.append(("Cargar el tipo de cambio", tipo_cambio > 0))
+    return requisitos
+
+
+def _render_jetsmart_result(conjunto, fuentes: dict, tipo_cambio: float, vuelos_inter: dict[str, int]) -> tuple[object, tuple[str, str]]:
     """Corre el cruce con Ariel + la liquidacion de JetSmart y muestra el resultado.
 
-    uploaded_file / archivo_anterior: archivos de trabajo de Anita (hoja BD
-    primero + hoja ARIEL) del mes y del mes anterior. export_siguiente_file:
-    export de guias del mes siguiente, opcional. ariel_mes_crudo /
-    ariel_anterior_crudo: la rendicion original de Ariel (hoja Venta), solo
-    cuando el archivo de trabajo correspondiente no trae la hoja ARIEL.
+    conjunto: los archivos ya reconocidos y asignados a su rol (ver
+    jetsmart_archivos.armar_conjunto). fuentes: {id(archivo detectado):
+    archivo subido}, para leer cada uno con el lector que le corresponde.
     """
+    def leer_export(detectado):
+        return cargar_export(fuentes[id(detectado)], detectado.tipo)
+
+    def leer_ariel(detectado):
+        return cargar_ariel(fuentes[id(detectado)], detectado.tipo)[0]
+
     with st.spinner("Cruzando con Ariel y generando liquidación..."):
-        export = load_jetsmart_export(uploaded_file)
-        period, otros_meses = detect_jetsmart_period(export)
-        ariel, _ = load_ariel_raw(ariel_mes_crudo) if ariel_mes_crudo is not None else load_ariel(uploaded_file)
-        export_anterior = load_jetsmart_export(archivo_anterior)
-        ariel_anterior, _ = (
-            load_ariel_raw(ariel_anterior_crudo) if ariel_anterior_crudo is not None else load_ariel(archivo_anterior)
-        )
-        export_siguiente = load_jetsmart_export(export_siguiente_file) if export_siguiente_file is not None else None
+        export = leer_export(conjunto.export_mes)
+        # El mes de la liquidacion es el de Ariel (mes de vuelo): lo que se
+        # liquida es lo que Ariel declaro. Las guias de otros meses se avisan aparte.
+        period = conjunto.periodo
+        _, otros_meses = detect_jetsmart_period(export)
+        ariel = leer_ariel(conjunto.ariel_mes)
+        export_anterior = leer_export(conjunto.export_anterior)
+        ariel_anterior = leer_ariel(conjunto.ariel_anterior)
+        export_siguiente = leer_export(conjunto.export_siguiente) if conjunto.export_siguiente is not None else None
         resultado = cruzar_jetsmart(export, ariel, period, export_anterior, ariel_anterior, export_siguiente)
 
         guias = build_jetsmart_guias(resultado.incluidas)
@@ -1049,9 +1086,10 @@ def _render_jetsmart_result(
         write_jetsmart_liquidacion(guias, resumen, period, buffer, cruce=cruce)
         buffer.seek(0)
 
+        archivo_mes = fuentes[id(conjunto.export_mes)]
         guardar_liquidacion_jetsmart(
-            nombre_archivo=uploaded_file.name,
-            file_bytes=uploaded_file.getvalue(),
+            nombre_archivo=archivo_mes.name,
+            file_bytes=archivo_mes.getvalue(),
             period=period,
             filas_export=len(export),
             filas_otros_meses=len(otros_meses),
@@ -1150,39 +1188,24 @@ with st.container(key="zona_carga"):
 
     with st.container(border=True, key="card_upload"):
         _step(2, "Subí el archivo", _archivo_hint(airline_key))
-        # Etiqueta fija + key: si cambia la aerolinea, el archivo ya subido
-        # no se pierde (la ayuda dinamica va arriba, en _step).
-        uploaded_file = st.file_uploader("Archivo del mes", type="xlsx", key="archivo_mes", label_visibility="collapsed")
-
-        # JetSmart necesita ademas el archivo de trabajo del mes anterior
-        # (cruce con Ariel) y, opcional, el export del mes siguiente. Si un
-        # archivo de trabajo no trae la hoja ARIEL armada, se puede subir al
-        # lado la rendicion original de Ariel (hoja Venta) y se lee de ahi
-        # (load_ariel_raw); si la trae, todo sigue igual que siempre.
-        archivo_anterior = export_siguiente_file = None
-        ariel_mes_crudo = ariel_anterior_crudo = None
-        mes_sin_ariel = es_jetsmart_sel and uploaded_file is not None and not has_ariel_sheet(uploaded_file)
-        if mes_sin_ariel:
-            ariel_mes_crudo = st.file_uploader(
-                "Archivo de Ariel del mes (el original, tal como te lo manda él) — el archivo del mes no trae la hoja ARIEL",
-                type="xlsx", key="js_ariel_mes",
-            )
+        # JetSmart: UNA sola zona de carga, varios archivos en cualquier orden.
+        # Cada archivo se reconoce por sus columnas (jetsmart_archivos.py): la
+        # usuaria no tiene que saber que casillero va con cual.
+        uploaded_file = None
+        conjunto, fuentes = None, {}
         if es_jetsmart_sel:
-            archivo_anterior = st.file_uploader(
-                "Archivo de trabajo del mes anterior (LIQUIDACION ECS, con hojas BD y ARIEL)",
-                type="xlsx", key="js_anterior",
+            archivos_js = st.file_uploader(
+                "Archivos del mes", type="xlsx", accept_multiple_files=True,
+                key="js_archivos", label_visibility="collapsed",
             )
-            anterior_sin_ariel = archivo_anterior is not None and not has_ariel_sheet(archivo_anterior)
-            if anterior_sin_ariel:
-                ariel_anterior_crudo = st.file_uploader(
-                    "Archivo de Ariel del mes anterior (el original, tal como te lo manda él) — "
-                    "el archivo del mes anterior no trae la hoja ARIEL",
-                    type="xlsx", key="js_ariel_anterior",
-                )
-            export_siguiente_file = st.file_uploader(
-                "Export de guías del mes siguiente (opcional: confirma las guías del último día del mes)",
-                type="xlsx", key="js_siguiente",
-            )
+            detectados = [_detectar_jetsmart(f.name, f.getvalue()) for f in archivos_js]
+            fuentes = {id(d): f for d, f in zip(detectados, archivos_js)}
+            conjunto = armar_conjunto(detectados)
+            _render_archivos_detectados(detectados, conjunto)
+        else:
+            # Etiqueta fija + key: si cambia la aerolinea, el archivo ya subido
+            # no se pierde (la ayuda dinamica va arriba, en _step).
+            uploaded_file = st.file_uploader("Archivo del mes", type="xlsx", key="archivo_mes", label_visibility="collapsed")
 
     # JetSmart necesita datos que no vienen en ningun export: el tipo de
     # cambio del periodo (todavia sin confirmar de donde sale -- por ahora
@@ -1200,21 +1223,10 @@ with st.container(key="zona_carga"):
                         f"Vuelos internacionales {station} ({usd:g} USD c/u)", min_value=0, value=0, step=1,
                     ))
 
-    requisitos = [("Elegir la aerolínea", airline_key is not None), ("Subir el archivo del mes", uploaded_file is not None)]
-    def _requisito_ariel_crudo(crudo, cual: str) -> tuple[str, bool]:
-        if crudo is None:
-            return (f"Subir el archivo de Ariel {cual} (el archivo de trabajo no trae la hoja ARIEL)", False)
-        if not has_ariel_raw_file(crudo):
-            return (f"El archivo de Ariel {cual} tiene que tener la hoja Venta con la tabla de guías", False)
-        return (f"Subir el archivo de Ariel {cual}", True)
-
     if es_jetsmart_sel:
-        if mes_sin_ariel:
-            requisitos.append(_requisito_ariel_crudo(ariel_mes_crudo, "del mes"))
-        requisitos.append(("Subir el archivo de trabajo del mes anterior", archivo_anterior is not None))
-        if archivo_anterior is not None and anterior_sin_ariel:
-            requisitos.append(_requisito_ariel_crudo(ariel_anterior_crudo, "del mes anterior"))
-        requisitos.append(("Cargar el tipo de cambio", tipo_cambio > 0))
+        requisitos = _requisitos_jetsmart(conjunto, bool(fuentes), tipo_cambio)
+    else:
+        requisitos = [("Elegir la aerolínea", airline_key is not None), ("Subir el archivo del mes", uploaded_file is not None)]
     listo = all(ok for _, ok in requisitos)
 
     with st.container(key="card_accion"):
@@ -1235,10 +1247,7 @@ with st.container(key="zona_carga"):
             airline_cfg = AIRLINE_CONFIGS[airline_key]
             try:
                 if airline_cfg.get("flow") == FLOW_JETSMART:
-                    buffer, period = _render_jetsmart_result(
-                        uploaded_file, tipo_cambio, vuelos_inter, archivo_anterior, export_siguiente_file,
-                        ariel_mes_crudo, ariel_anterior_crudo,
-                    )
+                    buffer, period = _render_jetsmart_result(conjunto, fuentes, tipo_cambio, vuelos_inter)
                 elif airline_cfg.get("flow") == FLOW_LIQUIDACION:
                     buffer, _, period = _render_liquidacion_result(uploaded_file)
                 else:
@@ -1297,12 +1306,24 @@ with st.container(key="zona_carga"):
                             unsafe_allow_html=True,
                         )
             except Exception as exc:  # el detalle tecnico va aparte, chico
-                st.error(
-                    f"**No se pudo procesar el archivo como {_airline_name(airline_key)}.** "
-                    "Revisá que sea el archivo correcto para esa aerolínea y volvé a intentarlo.",
-                    icon=":material/error:",
-                )
-                st.caption(f"Detalle técnico: {type(exc).__name__}: {exc}")
+                if airline_cfg.get("flow") == FLOW_JETSMART:
+                    # Los archivos ya se reconocieron antes de llegar aca: si igual falla, es algo
+                    # inesperado dentro de uno de ellos. Nunca un mensaje tecnico a la usuaria.
+                    st.error(
+                        "**No pude armar la liquidación de JetSmart con estos archivos.** "
+                        "Revisá que sean los de este mes y que no estén editados o incompletos. "
+                        "Si sigue pasando, avisale a sistemas.",
+                        icon=":material/error:",
+                    )
+                    with st.expander("Detalle técnico (para sistemas)"):
+                        st.code(f"{type(exc).__name__}: {exc}")
+                else:
+                    st.error(
+                        f"**No se pudo procesar el archivo como {_airline_name(airline_key)}.** "
+                        "Revisá que sea el archivo correcto para esa aerolínea y volvé a intentarlo.",
+                        icon=":material/error:",
+                    )
+                    st.caption(f"Detalle técnico: {type(exc).__name__}: {exc}")
 
 
 # ---------------------------------------------------------------------------
