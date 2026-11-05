@@ -733,6 +733,40 @@ def _control_total_vuelos(leido, cantidad: int, usd_por_vuelo: float, *, mostrar
         )
 
 
+def _usar_cantidad(station: str, cantidad: int) -> None:
+    """Callback del boton "Usar N": pone la cantidad leida del Excel de Ariel en el campo."""
+    st.session_state[f"js_vuelos_{station}"] = cantidad
+
+
+def _parece_importe(leido, cantidad: int) -> bool:
+    """La cantidad cargada parece un importe en USD: coincide (casi) con el total en
+    USD del Excel de Ariel, o supera el umbral de vuelos razonables. Si es justo lo
+    que leyo del Excel de Ariel no se discute."""
+    if leido is not None and leido.cantidad is not None and cantidad == leido.cantidad:
+        return False
+    if leido is not None and leido.total_usd is not None and cantidad > 0 and abs(cantidad - leido.total_usd) <= 1:
+        return True
+    return cantidad > JETSMART_VUELOS_INTER_AVISO_CANTIDAD
+
+
+def _aviso_importe(station: str, leido, cantidad: int) -> None:
+    """Si la cantidad parece un importe, dice que va la cantidad de vuelos y, si el
+    Excel de Ariel la trae, ofrece usarla con un boton. No bloquea nada."""
+    if not _parece_importe(leido, cantidad):
+        return
+    sabe = leido is not None and leido.cantidad is not None
+    st.warning(
+        "Parece que pusiste un importe en USD. Acá va la cantidad de vuelos"
+        + (f" (el Excel de Ariel tiene {leido.cantidad})." if sabe else "."),
+        icon=":material/warning:",
+    )
+    if sabe:
+        st.button(
+            f"Usar {leido.cantidad}", key=f"js_usar_{station}", icon=":material/check:",
+            on_click=_usar_cantidad, args=(station, leido.cantidad),
+        )
+
+
 def _money(value: float) -> str:
     return f"$ {_num(value)}"
 
@@ -1646,8 +1680,7 @@ with st.container(key="zona_carga"):
                     if not confirmado:
                         st.caption(_cuenta_vuelos(vuelos_inter[station], usd_por_vuelo[station]))
                     _control_total_vuelos(leido, vuelos_inter[station], usd_por_vuelo[station], mostrar_ok=not confirmado)
-                    if vuelos_inter[station] > JETSMART_VUELOS_INTER_AVISO_CANTIDAD:
-                        st.warning("¿Es la cantidad o el importe?", icon=":material/warning:")
+                    _aviso_importe(station, leido, vuelos_inter[station])
 
     if es_jetsmart_sel:
         requisitos = _requisitos_jetsmart(conjunto, bool(fuentes), tipo_cambio)

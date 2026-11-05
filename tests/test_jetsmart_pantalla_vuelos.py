@@ -20,6 +20,7 @@ FIX = Path(__file__).resolve().parent / "fixtures" / "jetsmart"
 ARIEL_OCT = FIX / "Ariel_Rendicion_octubre_2026.xlsx"
 ARIEL_SEP = FIX / "Ariel_Rendicion_septiembre_2026.xlsx"
 GUIAS_OCT = FIX / "Guias_Aerea_10-2026.xlsx"
+AVISO_IMPORTE = "Parece que pusiste un importe en USD. Acá va la cantidad de vuelos."
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 APP = Path(__file__).resolve().parent.parent / "app.py"
 
@@ -100,7 +101,7 @@ class VuelosInternacionales(unittest.TestCase):
     def test_aviso_amarillo_si_la_cantidad_supera_150_por_estacion(self):
         self.at.number_input(key="js_vuelos_EZE").set_value(151).run()
         avisos = [w.value for w in self.at.warning]
-        self.assertEqual(avisos.count("¿Es la cantidad o el importe?"), 1)
+        self.assertEqual(avisos.count(AVISO_IMPORTE), 1)
         # La cuenta se sigue mostrando: el aviso no bloquea nada.
         self.assertIn("151 vuelos", _textos(self.at))
         self.assertEqual(len(self.at.exception), 0)
@@ -112,7 +113,7 @@ class VuelosInternacionales(unittest.TestCase):
 
     def test_el_aviso_es_por_estacion(self):
         self.at.number_input(key="js_vuelos_MDZ").set_value(1000).run()
-        self.assertEqual([w.value for w in self.at.warning], ["¿Es la cantidad o el importe?"])
+        self.assertEqual([w.value for w in self.at.warning], [AVISO_IMPORTE])
         self.at.number_input(key="js_vuelos_EZE").set_value(200).run()
         self.assertEqual(len(self.at.warning), 2)
 
@@ -249,6 +250,64 @@ class CantidadConfirmadaDesdeAriel(unittest.TestCase):
         self.assertEqual(_expanders_a_mano(self.at), [])
         self.assertNotIn("✔", _textos(self.at))
         self.assertEqual(self.at.number_input(key="js_vuelos_EZE").label, "Cantidad de vuelos")
+
+
+@unittest.skipUnless(ARIEL_OCT.exists(), "faltan los archivos reales")
+class AvisoDeImporteConBoton(unittest.TestCase):
+    """Si lo cargado parece un importe en USD, el aviso dice que va la cantidad y ofrece usar la del Excel de Ariel."""
+
+    def setUp(self):
+        self._env = mock.patch.dict(os.environ)
+        self._env.start()
+        os.environ.pop("DATABASE_URL", None)
+        self.at = _app()
+        _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
+
+    def tearDown(self):
+        self._env.stop()
+
+    def _avisos_importe(self):
+        return [w.value for w in self.at.warning if w.value.startswith("Parece que pusiste un importe")]
+
+    def test_sin_importe_no_hay_aviso_ni_boton(self):
+        self.assertEqual(self._avisos_importe(), [])
+        self.assertEqual([b.label for b in self.at.button if b.label.startswith("Usar")], [])
+
+    def test_el_importe_del_excel_de_ariel_se_reconoce_y_dice_cuanto_es_la_cantidad(self):
+        self.at.number_input(key="js_vuelos_EZE").set_value(857).run()  # el total amarillo, 857,5
+        self.assertEqual(
+            self._avisos_importe(),
+            ["Parece que pusiste un importe en USD. Acá va la cantidad de vuelos (el Excel de Ariel tiene 49)."],
+        )
+        self.assertNotIn("¿Es la cantidad o el importe?", [w.value for w in self.at.warning])
+
+    def test_un_valor_alto_tambien_parece_un_importe(self):
+        self.at.number_input(key="js_vuelos_MDZ").set_value(945).run()
+        self.assertEqual(len(self._avisos_importe()), 1)
+        self.assertIn("el Excel de Ariel tiene 27", self._avisos_importe()[0])
+
+    def test_el_boton_usa_la_cantidad_del_excel(self):
+        self.at.number_input(key="js_vuelos_EZE").set_value(857).run()
+        boton = self.at.button(key="js_usar_EZE")
+        self.assertEqual(boton.label, "Usar 49")
+        boton.click().run()
+        self.assertEqual(self.at.number_input(key="js_vuelos_EZE").value, 49)
+        self.assertEqual(self._avisos_importe(), [])
+        self.assertEqual(len([b for b in self.at.button if b.label.startswith("Usar")]), 0)
+        self.assertIn("EZE: 49 vuelos × 17,5 USD = 857,5 USD** ✔ coincide con el Excel de Ariel", _textos(self.at))
+        self.assertEqual(len(self.at.exception), 0)
+
+    def test_es_por_estacion(self):
+        self.at.number_input(key="js_vuelos_EZE").set_value(857).run()
+        self.assertEqual([b.label for b in self.at.button if b.label.startswith("Usar")], ["Usar 49"])
+        self.assertEqual(len(self._avisos_importe()), 1)  # MDZ sigue bien: no avisa
+
+    def test_sin_el_excel_de_ariel_avisa_sin_boton(self):
+        at = _app()
+        at.number_input(key="js_vuelos_EZE").set_value(857).run()
+        avisos = [w.value for w in at.warning if w.value.startswith("Parece que pusiste un importe")]
+        self.assertEqual(avisos, [AVISO_IMPORTE])
+        self.assertEqual([b.label for b in at.button if b.label.startswith("Usar")], [])
 
 
 if __name__ == "__main__":
