@@ -309,6 +309,13 @@ class AvisoDeImporteConBoton(unittest.TestCase):
         self.assertEqual(avisos, [AVISO_IMPORTE])
         self.assertEqual([b.label for b in at.button if b.label.startswith("Usar")], [])
 
+    def test_sigue_el_aviso_de_diferencia_contra_el_total_de_ariel(self):
+        self.at.number_input(key="js_vuelos_EZE").set_value(857).run()
+        avisos = _avisos_control(self.at)
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("No coincide con el total del Excel de Ariel", avisos[0])
+        self.assertIn("857,5 USD", avisos[0])
+
 
 if __name__ == "__main__":
     unittest.main()
