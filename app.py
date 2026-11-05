@@ -1221,84 +1221,15 @@ def _texto_ultimo_dia(cantidad: int, ultimo_dia: str) -> str:
     )
 
 
-def _render_cruce(cruce: dict, *, key: str) -> None:
-    """Resultado del cruce con Ariel: resumen, aviso de la regla de ultimo
-    dia y SOLO las excepciones (lo que matchea limpio no se muestra).
-
-    Es la vista del Historial; la pantalla de resultado de JetSmart muestra lo
-    mismo repartido por importancia (ver _render_jetsmart_result)."""
-    r = cruce["resumen"]
-    excepciones = cruce["excepciones"]
-    ultimo_dia = cruce["incluidas_ultimo_dia"]
-
-    st.markdown(_cruce_card_html(cruce), unsafe_allow_html=True)
-
-    repetidas = r.get("ariel_repetidas_identicas") or []
+def _avisos_cruce(cruce: dict) -> None:
+    """Avisos amarillos del cruce (filas repetidas de Ariel y regla de ultimo
+    dia). Se ven siempre, en el resultado y en el Historial: no se esconden en un detalle."""
+    repetidas = cruce["resumen"].get("ariel_repetidas_identicas") or []
     if repetidas:
-        # Aviso visible (tambien en el historial): se cuentan una vez, pero hay que saber que Ariel las mando dos.
-        unicas = sorted(set(repetidas))
         st.warning(_texto_repetidas(repetidas), icon=":material/content_copy:")
-        with st.expander("Ver las guías repetidas", key=f"{key}_repetidas"):
-            st.write(", ".join(str(g) for g in unicas))
-
+    ultimo_dia = cruce["incluidas_ultimo_dia"]
     if not ultimo_dia.empty:
-        st.warning(_texto_ultimo_dia(len(ultimo_dia), r["ultimo_dia"]), icon=":material/warning:")
-        with st.expander(f"Ver las {len(ultimo_dia)} guías incluidas por la regla de último día", key=f"{key}_ultimo_dia"):
-            _tabla_ultimo_dia(ultimo_dia)
-
-    if r["ingreso_fuera_por_revision"]:
-        st.warning(
-            f"Hay guías de Ariel a revisión manual que quedaron FUERA de la liquidación por "
-            f"{_money(r['ingreso_fuera_por_revision'])} de ingreso. Revisalas en la tabla de excepciones.",
-            icon=":material/warning:",
-        )
-
-    if excepciones.empty:
-        st.caption("Sin excepciones: todas las guías cruzaron limpio.")
-    else:
-        st.markdown('<div class="hwc-group-title">Excepciones del cruce</div>', unsafe_allow_html=True)
-        # Vacio en vez de "None": numeros como numero, texto en blanco.
-        # Solo presentacion (el Excel lleva la columna "Detalle" completa): el
-        # texto largo de "Detalle" es el mismo para todas las filas de un tipo
-        # y hacia que la tabla desbordara el ancho de la pagina. En la tabla
-        # queda solo lo que varia por fila ("Qué difiere", en las
-        # diferencias); la explicacion de cada tipo va una vez, abajo.
-        vista = excepciones.copy()
-        for col in ["Kg export", "Kg Ariel", "Ingreso export", "Ingreso Ariel"]:
-            vista[col] = pd.to_numeric(vista[col], errors="coerce")
-        vista["Nro guía"] = nro_guia_entero(vista["Nro guía"])
-        vista["Fecha Ariel"] = vista["Fecha Ariel"].fillna("")
-        es_dif = vista["Tipo"] == EXC_DIFERENCIA
-        vista["Qué difiere"] = ""
-        vista.loc[es_dif, "Qué difiere"] = (
-            vista.loc[es_dif, "Detalle"].fillna("").str.replace("Difiere ", "", regex=False).str.rstrip(".")
-        )
-        explicaciones = [
-            (t, d) for t, d in
-            vista.loc[~es_dif & vista["Detalle"].notna(), ["Tipo", "Detalle"]].drop_duplicates("Tipo").itertuples(index=False)
-        ]
-        if es_dif.any():
-            explicaciones.insert(0, (EXC_DIFERENCIA, "entra a la liquidación con los valores de Ariel."))
-        # "Sí, con valores de Ariel" -> "Sí": la aclaracion va en la leyenda.
-        vista["¿Entra a la liquidación?"] = vista["¿Entra a la liquidación?"].str.split(",").str[0]
-        vista = vista.drop(columns=["Detalle"]).rename(columns={"¿Entra a la liquidación?": "¿Entra?"})
-        st.dataframe(vista, use_container_width=True, hide_index=True, key=f"{key}_excepciones", column_config={
-            # Solo el nro de guia fijo (angosto): al scrollear en mobile no se
-            # pierde de que guia es cada fila. "Tipo" fijo tapaba todo.
-            "Nro guía": st.column_config.NumberColumn(format="plain", pinned=True),
-            "¿Entra?": st.column_config.TextColumn(help="¿Entra a la liquidación de este mes?"),
-            **{
-                c: st.column_config.NumberColumn(format="localized")
-                for c in ("Kg export", "Kg Ariel", "Ingreso export", "Ingreso Ariel")
-            },
-        })
-        if explicaciones:
-            st.markdown(
-                '<ul class="hwc-exc-legend">'
-                + "".join(f"<li><b>{t}:</b> {d}</li>" for t, d in explicaciones)
-                + "</ul>",
-                unsafe_allow_html=True,
-            )
+        st.warning(_texto_ultimo_dia(len(ultimo_dia), cruce["resumen"]["ultimo_dia"]), icon=":material/warning:")
 
 
 @st.cache_data(show_spinner=False)
@@ -1365,24 +1296,47 @@ def _info_archivos(fuentes: dict, export, ariel) -> list[dict]:
     return info
 
 
+def _guias_como_texto(serie: pd.Series) -> pd.Series:
+    """Numero de guia para mostrar: texto con el entero (redondeado), nunca con
+    decimales. Va como texto para que la tabla no lo reformatee."""
+    return nro_guia_entero(serie).map(lambda v: "" if pd.isna(v) else str(int(v)))
+
+
 def _tabla_ultimo_dia(ultimo_dia: pd.DataFrame) -> None:
-    vista = ultimo_dia.assign(**{"Nro guía": nro_guia_entero(ultimo_dia["Nro guía"])})
+    vista = ultimo_dia.assign(**{"Nro guía": _guias_como_texto(ultimo_dia["Nro guía"])})
     st.dataframe(vista, use_container_width=True, hide_index=True, column_config={
-        "Nro guía": st.column_config.NumberColumn(format="plain"),
         **{c: st.column_config.NumberColumn(format="localized") for c in ("Kg Ariel", "Ingreso Ariel")},
     })
 
 
 def _tabla_guias(guias: pd.DataFrame, key: str) -> None:
     """La hoja GUIAS, con el numero de guia entero y los importes en formato argentino."""
-    vista = guias.assign(**{"Nro guía": nro_guia_entero(guias["Nro guía"])})
+    vista = guias.assign(**{"Nro guía": _guias_como_texto(guias["Nro guía"])})
     st.dataframe(
         vista, use_container_width=True, hide_index=True, height=min(420, 38 * (len(vista) + 1) + 4), key=key,
-        column_config={"Nro guía": st.column_config.NumberColumn(format="plain")} | {
+        column_config={
             c: st.column_config.NumberColumn(format="localized")
             for c in vista.columns if pd.api.types.is_float_dtype(vista[c])
         },
     )
+
+
+def _tabla_excepciones(excepciones: pd.DataFrame, key: str) -> None:
+    """Todas las guias del cruce que no coincidieron, con sus datos. Lo que no
+    hay (guia que no esta en Ariel o en el sistema) se muestra como "—", no "None"."""
+    vista = excepciones.copy()
+    for col in ["Kg export", "Kg Ariel", "Ingreso export", "Ingreso Ariel"]:
+        vista[col] = pd.to_numeric(vista[col], errors="coerce").map(lambda v: "—" if pd.isna(v) else _num(v))
+    vista["Nro guía"] = _guias_como_texto(vista["Nro guía"])
+    vista["Fecha Ariel"] = vista["Fecha Ariel"].map(lambda v: "—" if v is None or pd.isna(v) or v == "" else v)
+    es_dif = vista["Tipo"] == EXC_DIFERENCIA
+    vista["Qué difiere"] = ""
+    vista.loc[es_dif, "Qué difiere"] = (
+        vista.loc[es_dif, "Detalle"].fillna("").str.replace("Difiere ", "", regex=False).str.rstrip(".")
+    )
+    vista["¿Entra a la liquidación?"] = vista["¿Entra a la liquidación?"].str.split(",").str[0]
+    vista = vista.drop(columns=["Detalle"]).rename(columns={"¿Entra a la liquidación?": "¿Entra?"})
+    st.dataframe(vista, use_container_width=True, hide_index=True, key=key)
 
 
 def _datos_usados(tipo_cambio: float, vuelos_inter: dict[str, int], usd_por_vuelo: dict[str, float]) -> str:
@@ -1391,33 +1345,39 @@ def _datos_usados(tipo_cambio: float, vuelos_inter: dict[str, int], usd_por_vuel
 
 
 def _render_detalle_jetsmart(
-    cruce: dict, resumen: dict, guias: pd.DataFrame, mensaje_mes_anterior: str | None, anuladas: int,
-    datos_usados: str,
+    cruce: dict | None, resumen: dict, guias: pd.DataFrame, mensaje_mes_anterior: str | None, anuladas: int,
+    datos_usados: str | None, prefijo: str = "detalle",
 ) -> None:
     """Todo lo que explica COMO se armo la liquidacion, cerrado por defecto: lo
-    importante ya se vio arriba (estado, numeros, guias para revisar, descarga)."""
-    r = cruce["resumen"]
-    ultimo_dia = cruce["incluidas_ultimo_dia"]
-    repetidas = r.get("ariel_repetidas_identicas") or []
+    importante ya se vio arriba (estado, numeros, guias para revisar, descarga).
+    Lo usan el resultado y el Historial; prefijo evita claves repetidas si
+    estan en la misma pagina. cruce es None en liquidaciones viejas sin cruce guardado."""
+    if cruce is not None:
+        r = cruce["resumen"]
+        ultimo_dia = cruce["incluidas_ultimo_dia"]
+        repetidas = r.get("ariel_repetidas_identicas") or []
+        with st.expander("Cómo se armó el cruce", key=f"{prefijo}_cruce", icon=":material/compare_arrows:"):
+            st.caption("El cruce compara las guías del sistema con lo que declaró Ariel.")
+            if mensaje_mes_anterior:
+                st.markdown(f":material/history: {mensaje_mes_anterior}")
+            st.markdown(_cruce_card_html(cruce, anuladas), unsafe_allow_html=True)
+            if repetidas:
+                st.caption("Guías repetidas en Ariel: " + ", ".join(str(g) for g in sorted(set(repetidas))))
+            if not ultimo_dia.empty:
+                st.caption(f"Guías incluidas por la regla de último día ({len(ultimo_dia)}):")
+                _tabla_ultimo_dia(ultimo_dia)
+            if not cruce["excepciones"].empty:
+                st.caption("Guías que no coincidieron entre el sistema y Ariel:")
+                _tabla_excepciones(cruce["excepciones"], key=f"{prefijo}_excepciones")
 
-    with st.expander("Cómo se armó el cruce", key="detalle_cruce", icon=":material/compare_arrows:"):
-        st.caption("El cruce compara las guías del sistema con lo que declaró Ariel.")
-        if mensaje_mes_anterior:
-            st.markdown(f":material/history: {mensaje_mes_anterior}")
-        st.markdown(_cruce_card_html(cruce, anuladas), unsafe_allow_html=True)
-        if repetidas:
-            st.caption("Guías repetidas en Ariel: " + ", ".join(str(g) for g in sorted(set(repetidas))))
-        if not ultimo_dia.empty:
-            st.caption(f"Guías incluidas por la regla de último día ({len(ultimo_dia)}):")
-            _tabla_ultimo_dia(ultimo_dia)
-
-    with st.expander("Liquidación: comisiones, GHA y IVA", key="detalle_liquidacion", icon=":material/calculate:"):
+    with st.expander("Liquidación: comisiones, GHA y IVA", key=f"{prefijo}_liquidacion", icon=":material/calculate:"):
         st.markdown(_jetsmart_resumen_html(resumen), unsafe_allow_html=True)
 
-    with st.expander(f"Tabla de guías ({_num(len(guias), 0)})", key="detalle_guias", icon=":material/table:"):
-        _tabla_guias(guias, key="resultado_guias")
+    with st.expander(f"Tabla de guías ({_num(len(guias), 0)})", key=f"{prefijo}_guias", icon=":material/table:"):
+        _tabla_guias(guias, key=f"{prefijo}_tabla_guias")
 
-    st.caption(datos_usados)
+    if datos_usados:
+        st.caption(datos_usados)
 
 
 def _render_jetsmart_result(
@@ -1531,14 +1491,7 @@ def _render_jetsmart_result(
             icon=":material/warning:",
         )
     _jetsmart_avisos(resumen)
-    repetidas = resultado.resumen.get("ariel_repetidas_identicas") or []
-    if repetidas:
-        st.warning(_texto_repetidas(repetidas), icon=":material/content_copy:")
-    if not resultado.incluidas_ultimo_dia.empty:
-        st.warning(
-            _texto_ultimo_dia(len(resultado.incluidas_ultimo_dia), resultado.resumen["ultimo_dia"]),
-            icon=":material/warning:",
-        )
+    _avisos_cruce(cruce)
 
     _render_detalle_jetsmart(
         cruce, resumen, guias, mensaje_mes_anterior, ariel_leido.anuladas,
@@ -2009,13 +1962,55 @@ with st.container(key="zona_historial"):
                             es_jetsmart = fila_sel["tipo_cargo"] == "jetsmart_liquidacion"
 
                             cruce_guardado = _cruce_to_frames(resumen["_cruce"]) if es_jetsmart and resumen.get("_cruce") else None
+                            periodo_hist = (fila_sel["periodo_mes"], fila_sel["periodo_anio"])
+                            periodo_slug = period_slug(periodo_hist)
+
+                            # Excel en memoria con las mismas funciones que arman el
+                            # Excel real (write_liquidacion / write_report) -- no
+                            # reimplementa el armado del archivo, solo lo reusa
+                            # sobre el mismo detalle ya reconstruido arriba.
+                            detalle_buffer = io.BytesIO()
                             if es_jetsmart:
-                                if cruce_guardado is not None:
-                                    _render_cruce(cruce_guardado, key="hist_cruce")
-                                st.markdown(_jetsmart_resumen_html(resumen), unsafe_allow_html=True)
-                                st.caption(
-                                    f"{len(detalle_df)} guías (hoja \"GUIAS\") — TC {_num(resumen['tipo_cambio'])}. "
-                                    "Mismo cálculo que el Excel real de esta liquidación (jetsmart_builder.py)."
+                                write_jetsmart_liquidacion(
+                                    detalle_df, resumen, periodo_hist, detalle_buffer, cruce=cruce_guardado,
+                                )
+                            elif resumen is not None:
+                                write_liquidacion(detalle_df, resumen, detalle_buffer)
+                            else:
+                                write_report({sheet_name: detalle_df}, detalle_buffer)
+                            detalle_buffer.seek(0)
+
+                            def _boton_excel(tipo: str) -> None:
+                                st.download_button(
+                                    label="Descargar Excel de esta liquidación",
+                                    icon=":material/download:",
+                                    data=detalle_buffer,
+                                    file_name=f"{fila_sel['aerolinea']}_{fila_sel['estacion']}_{periodo_slug}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    type=tipo,
+                                    on_click="ignore",
+                                    key="hist_detalle_download",
+                                )
+
+                            if es_jetsmart:
+                                # Mismos componentes que el resultado recien procesado:
+                                # numeros, guias para revisar, descarga y el detalle cerrado.
+                                n_revisar = cruce_guardado["resumen"]["excepciones"] if cruce_guardado else 0
+                                _render_numeros_clave(resumen, len(detalle_df), n_revisar)
+                                if n_revisar:
+                                    st.markdown(
+                                        _html_para_revisar(
+                                            cruce_guardado["excepciones"], cruce_guardado["resumen"]["ingreso_fuera_por_revision"],
+                                        ),
+                                        unsafe_allow_html=True,
+                                    )
+                                _boton_excel("primary")
+                                _jetsmart_avisos(resumen)
+                                if cruce_guardado:
+                                    _avisos_cruce(cruce_guardado)
+                                _render_detalle_jetsmart(
+                                    cruce_guardado, resumen, detalle_df, None, 0,
+                                    f"Datos usados: tipo de cambio $ {_num(resumen['tipo_cambio'])}.", prefijo="hist_detalle",
                                 )
                             elif resumen is not None:
                                 # Resumen Facturacion (solo LATAM): mismo
@@ -2039,47 +2034,23 @@ with st.container(key="zona_historial"):
                                     "liquidación (report_builder.py), sin recalcular nada."
                                 )
 
-                            # Excel en memoria con las mismas funciones que arman el
-                            # Excel real (write_liquidacion / write_report) -- no
-                            # reimplementa el armado del archivo, solo lo reusa
-                            # sobre el mismo detalle ya reconstruido arriba.
-                            detalle_buffer = io.BytesIO()
-                            if es_jetsmart:
-                                write_jetsmart_liquidacion(
-                                    detalle_df, resumen, (fila_sel["periodo_mes"], fila_sel["periodo_anio"]), detalle_buffer,
-                                    cruce=cruce_guardado,
-                                )
-                            elif resumen is not None:
-                                write_liquidacion(detalle_df, resumen, detalle_buffer)
-                            else:
-                                write_report({sheet_name: detalle_df}, detalle_buffer)
-                            detalle_buffer.seek(0)
-
-                            periodo_slug = period_slug((fila_sel["periodo_mes"], fila_sel["periodo_anio"]))
-                            st.download_button(
-                                label="Descargar Excel de esta liquidación",
-                                icon=":material/download:",
-                                data=detalle_buffer,
-                                file_name=f"{fila_sel['aerolinea']}_{fila_sel['estacion']}_{periodo_slug}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                type="secondary",
-                                on_click="ignore",
-                                key="hist_detalle_download",
-                            )
+                            if not es_jetsmart:
+                                _boton_excel("secondary")
 
                             # Alto dinamico hasta un tope: con liquidaciones
                             # chicas (ej. 3 filas) no deja un montón de grilla
                             # vacia; con liquidaciones grandes (ej. 1033 filas)
                             # se topea en 420px y scrollea adentro del recuadro
                             # en vez de estirar la pagina entera.
-                            alto_tabla = min(420, 38 * (len(detalle_df) + 1) + 4)
-                            st.dataframe(
-                                detalle_df, use_container_width=True, hide_index=True, height=alto_tabla,
-                                column_config={
-                                    col: st.column_config.NumberColumn(format="localized")
-                                    for col in detalle_df.columns if pd.api.types.is_float_dtype(detalle_df[col])
-                                } | ({"Nro guía": st.column_config.NumberColumn(format="plain")} if es_jetsmart else {}),
-                            )
+                            if not es_jetsmart:
+                                alto_tabla = min(420, 38 * (len(detalle_df) + 1) + 4)
+                                st.dataframe(
+                                    detalle_df, use_container_width=True, hide_index=True, height=alto_tabla,
+                                    column_config={
+                                        col: st.column_config.NumberColumn(format="localized")
+                                        for col in detalle_df.columns if pd.api.types.is_float_dtype(detalle_df[col])
+                                    },
+                                )
 
 
 st.markdown('<div class="hwc-footer">Handyway Cargo · Automatización de reportes</div>', unsafe_allow_html=True)

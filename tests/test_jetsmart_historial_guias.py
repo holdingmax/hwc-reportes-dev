@@ -84,7 +84,7 @@ class HistorialEnPantalla(unittest.TestCase):
         self.assertEqual(len(at.exception), 0, [e.value for e in at.exception])
         tablas = [df.value for df in at.dataframe if COL_GUIAS_GUIA in df.value.columns]
         self.assertTrue(tablas, "no aparecio la tabla de guias del Historial")
-        self.assertEqual(list(tablas[0][COL_GUIAS_GUIA]), [102177, 102177, 1234567])
+        self.assertEqual(list(tablas[0][COL_GUIAS_GUIA]), ["102177", "102177", "1234567"])
 
 
 if __name__ == "__main__":

@@ -207,7 +207,12 @@ class ResultadoJetSmart(unittest.TestCase):
     def test_la_tabla_de_excepciones_ya_no_se_repite_mas_abajo(self):
         at = self._procesar()
         self.assertFalse(any("Excepciones del cruce" in m.value for m in at.markdown))
-        self.assertFalse(any("Tipo" in df.value.columns for df in at.dataframe))
+        # La tabla completa solo vive dentro del expander cerrado del cruce, no suelta en la pantalla.
+        cruce = _detalles(at)[0]
+        self.assertEqual(len(cruce.dataframe), 1)
+        self.assertEqual(
+            [d for d in at.dataframe if "Tipo" in d.value.columns and d.key != cruce.dataframe[0].key], [],
+        )
 
     def test_el_detalle_son_tres_expanders_cerrados(self):
         at = self._procesar()
@@ -235,7 +240,7 @@ class ResultadoJetSmart(unittest.TestCase):
         at = self._procesar()
         (df,) = [d.value for d in at.dataframe if "Nro guía" in d.value.columns and "TOTAL" in d.value.columns]
         self.assertEqual(len(df), 1953)
-        self.assertEqual(str(df["Nro guía"].dtype), "Int64")
+        self.assertTrue(all(v.isdigit() for v in df["Nro guía"]), "la guia debe verse sin decimales")
 
     def test_datos_usados_en_una_linea_chica(self):
         at = self._procesar(vuelos=(49, 27))
