@@ -42,6 +42,26 @@ def _lectura_version(version: int):
     return leer
 
 
+def _es_detalle(bloque) -> bool:
+    """Los expanders del detalle (en este AppTest salen como bloques con rotulo)."""
+    return getattr(bloque, "label", None) is not None and hasattr(getattr(bloque, "proto", None), "expanded")
+
+
+def _detalles(at) -> list:
+    """Los expanders del DETALLE de la liquidacion, en orden (sin el del Historial)."""
+    encontrados = []
+
+    def recorrer(bloque):
+        for hijo in bloque.children.values():
+            if isinstance(hijo, Block):
+                if _es_detalle(hijo) and not hijo.label.startswith("Ver historial"):
+                    encontrados.append(hijo)
+                recorrer(hijo)
+
+    recorrer(at.main)
+    return encontrados
+
+
 def _htmls(at, clase: str) -> list[str]:
     return [m.value for m in at.markdown if clase in m.value and "<style>" not in m.value]
 
@@ -54,7 +74,10 @@ class ResultadoJetSmart(unittest.TestCase):
         os.environ.pop("DATABASE_URL", None)
         self.addCleanup(self._env.stop)
 
-    def _procesar(self, guardado=GUARDADO_OK, version: int | None = 3, sin_excepciones: bool = False):
+    def _procesar(
+        self, guardado=GUARDADO_OK, version: int | None = 3, sin_excepciones: bool = False,
+        vuelos: tuple[int, int] | None = None,
+    ):
         patches = [mock.patch("src.db.guardar_liquidacion_jetsmart", return_value=guardado)]
         if version is not None:
             patches.append(mock.patch("src.db.obtener_mes_anterior_jetsmart", side_effect=_lectura_version(version)))
@@ -65,6 +88,9 @@ class ResultadoJetSmart(unittest.TestCase):
             self.addCleanup(p.stop)
         at = _app(CLAVES)
         at.number_input[0].set_value(1485.0)
+        if vuelos is not None:  # si no, quedan los que precarga el Excel de Ariel (EZE 49, MDZ 27)
+            at.number_input(key="js_vuelos_EZE").set_value(vuelos[0])
+            at.number_input(key="js_vuelos_MDZ").set_value(vuelos[1])
         at.run()
         at.button[0].click()
         at.run()
@@ -138,6 +164,8 @@ class ResultadoJetSmart(unittest.TestCase):
         def recorrer(bloque):
             for hijo in bloque.children.values():
                 if isinstance(hijo, Block):
+                    if _es_detalle(hijo) and not hijo.label.startswith("Ver historial"):
+                        orden.append("detalle")
                     recorrer(hijo)
                     continue
                 valor = getattr(hijo, "value", "")
@@ -152,7 +180,7 @@ class ResultadoJetSmart(unittest.TestCase):
                     orden.append("para_revisar")
 
         recorrer(at.main)
-        self.assertEqual(orden, ["banner", "tarjetas", "para_revisar", "boton"])
+        self.assertEqual(orden, ["banner", "tarjetas", "para_revisar", "boton", "detalle", "detalle", "detalle"])
 
     def test_para_revisar_lista_cada_guia_con_que_hacer(self):
         at = self._procesar()
@@ -179,7 +207,50 @@ class ResultadoJetSmart(unittest.TestCase):
     def test_la_tabla_de_excepciones_ya_no_se_repite_mas_abajo(self):
         at = self._procesar()
         self.assertFalse(any("Excepciones del cruce" in m.value for m in at.markdown))
-        self.assertEqual(len(at.dataframe), 0)
+        self.assertFalse(any("Tipo" in df.value.columns for df in at.dataframe))
+
+    def test_el_detalle_son_tres_expanders_cerrados(self):
+        at = self._procesar()
+        detalle = _detalles(at)
+        self.assertEqual(
+            [d.label for d in detalle],
+            ["Cómo se armó el cruce", "Liquidación: comisiones, GHA y IVA", "Tabla de guías (1.953)"],
+        )
+        self.assertFalse(any(d.proto.expanded for d in detalle))
+
+    def test_el_detalle_tiene_el_cruce_la_liquidacion_y_la_tabla(self):
+        at = self._procesar()
+        cruce, liquidacion, tabla = _detalles(at)
+        cruce_txt = " ".join(m.value for m in cruce.markdown) + " ".join(c.value for c in cruce.caption)
+        self.assertIn("El cruce compara las guías del sistema con lo que declaró Ariel", cruce_txt)
+        self.assertIn("Mes anterior: septiembre 2026", cruce_txt)
+        for fila in ("Guías que entran a la liquidación", "Coinciden exacto", "Ya declaradas el mes anterior",
+                     "Anuladas por Ariel (no se cuentan)", "Filas repetidas de Ariel"):
+            self.assertIn(fila, cruce_txt)
+        self.assertNotIn("Matchean", cruce_txt)  # jerga
+        self.assertIn("Total a entregar a WCS", " ".join(m.value for m in liquidacion.markdown))
+        self.assertEqual(len(tabla.dataframe), 1)
+
+    def test_tabla_de_guias_con_numero_entero(self):
+        at = self._procesar()
+        (df,) = [d.value for d in at.dataframe if "Nro guía" in d.value.columns and "TOTAL" in d.value.columns]
+        self.assertEqual(len(df), 1953)
+        self.assertEqual(str(df["Nro guía"].dtype), "Int64")
+
+    def test_datos_usados_en_una_linea_chica(self):
+        at = self._procesar(vuelos=(49, 27))
+        lineas = [c.value for c in at.caption if c.value.startswith("Datos usados:")]
+        self.assertEqual(len(lineas), 1)
+        self.assertIn("tipo de cambio $ 1.485,00", lineas[0])
+        self.assertIn("EZE 49 vuelos × 17,5 USD = 857,5 USD", lineas[0])
+        self.assertIn("MDZ 27 vuelos × 35 USD = 945 USD", lineas[0])
+
+    def test_los_avisos_importantes_siguen_a_la_vista(self):
+        at = self._procesar()
+        avisos = " ".join(w.value for w in at.warning)
+        self.assertIn("20 filas repetidas idénticas", avisos)
+        # ...y no quedaron escondidos dentro de un expander cerrado.
+        self.assertFalse(any("repetidas idénticas" in w.value for d in _detalles(at) for w in d.warning))
 
 
 if __name__ == "__main__":

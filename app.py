@@ -1181,72 +1181,79 @@ def _cruce_to_frames(cruce: dict) -> dict:
     }
 
 
-def _render_cruce(cruce: dict, *, key: str, con_excepciones: bool = True) -> None:
+def _cruce_card_html(cruce: dict, anuladas: int | None = None) -> str:
+    """Card "Cruce con Ariel": como quedaron las guias al compararlas con lo que
+    declaro Ariel. anuladas: las que Ariel anulo (no se guardan en el cruce: solo
+    se conocen al procesar, por eso es opcional)."""
+    r = cruce["resumen"]
+    motivos = r["motivos_inclusion"]
+    n_exc = r["excepciones"]
+    n_repetidas = len(r.get("ariel_repetidas_identicas") or [])
+    return _resumen_card("Cruce con Ariel", [
+        ("subtotal", "Guías que entran a la liquidación", _num(r["incluidas"], 0)),
+        ("ok", "Coinciden exacto (sistema = Ariel)", _num(motivos.get("match", 0), 0)),
+        # Pendientes de declarar el mes anterior que Ariel declaro ahora: entran, y sin esta linea las cuentas no cierran.
+        *([("item", "Pendientes del mes anterior, declaradas ahora", _num(motivos[INC_PENDIENTE_ANTERIOR], 0))]
+          if motivos.get(INC_PENDIENTE_ANTERIOR) else []),
+        ("item", "Ya declaradas el mes anterior (quedan afuera)", _num(r["ya_declaradas_mes_anterior"], 0)),
+        *([("item", "Anuladas por Ariel (no se cuentan)", _num(anuladas, 0))] if anuladas else []),
+        # Repetidas identicas de Ariel: siempre un error de carga (confirmado por Anita, 4/11/2026).
+        *([("warn", "Filas repetidas de Ariel (contadas una sola vez)", _num(n_repetidas, 0))] if n_repetidas else []),
+        ("warn" if n_exc else "ok", "Guías para revisar" if n_exc else "Nada para revisar", _num(n_exc, 0)),
+    ])
+
+
+def _texto_repetidas(repetidas: list) -> str:
+    unicas = sorted(set(repetidas))
+    return (
+        f"La rendición de Ariel traía {len(repetidas)} "
+        f"{'fila repetida idéntica' if len(repetidas) == 1 else 'filas repetidas idénticas'} "
+        f"({len(unicas)} {'guía' if len(unicas) == 1 else 'guías'}): la misma guía cargada dos veces. "
+        "Las conté una sola vez en la liquidación."
+    )
+
+
+def _texto_ultimo_dia(cantidad: int, ultimo_dia: str) -> str:
+    return (
+        f"Se incluyeron {cantidad} guías de Ariel del último día del mes ({ultimo_dia}) "
+        "por la regla de último día, sin confirmación cruzada: no están en el export de este mes y "
+        "todavía no se cargó el export del mes siguiente para confirmarlas."
+    )
+
+
+def _render_cruce(cruce: dict, *, key: str) -> None:
     """Resultado del cruce con Ariel: resumen, aviso de la regla de ultimo
     dia y SOLO las excepciones (lo que matchea limpio no se muestra).
 
-    con_excepciones=False: sin la tabla de excepciones ni el aviso del ingreso
-    fuera (la pantalla de resultado las muestra aparte, en "Para revisar")."""
+    Es la vista del Historial; la pantalla de resultado de JetSmart muestra lo
+    mismo repartido por importancia (ver _render_jetsmart_result)."""
     r = cruce["resumen"]
     excepciones = cruce["excepciones"]
     ultimo_dia = cruce["incluidas_ultimo_dia"]
-    motivos = r["motivos_inclusion"]
 
-    n_exc = r["excepciones"]
-    n_repetidas = len(r.get("ariel_repetidas_identicas") or [])
-    st.markdown(
-        _resumen_card("Cruce con Ariel", [
-            ("subtotal", "Guías que entran a la liquidación", _num(r["incluidas"], 0)),
-            ("ok", "Matchean limpio (export = Ariel)", _num(motivos.get("match", 0), 0)),
-            # Pendientes de declarar el mes anterior que Ariel declaro ahora: entran, y sin esta linea las cuentas no cierran.
-            *([("item", "Pendientes del mes anterior, declaradas ahora", _num(motivos[INC_PENDIENTE_ANTERIOR], 0))]
-              if motivos.get(INC_PENDIENTE_ANTERIOR) else []),
-            ("item", "Ya declaradas el mes anterior (quedan afuera)", _num(r["ya_declaradas_mes_anterior"], 0)),
-            # Repetidas identicas de Ariel: siempre un error de carga (confirmado por Anita, 4/11/2026).
-            *([("warn", "Filas repetidas de Ariel (contadas una sola vez)", _num(n_repetidas, 0))] if n_repetidas else []),
-            ("warn" if n_exc else "ok", "Excepciones para revisar" if n_exc else "Sin excepciones", _num(n_exc, 0)),
-        ]),
-        unsafe_allow_html=True,
-    )
+    st.markdown(_cruce_card_html(cruce), unsafe_allow_html=True)
 
     repetidas = r.get("ariel_repetidas_identicas") or []
     if repetidas:
         # Aviso visible (tambien en el historial): se cuentan una vez, pero hay que saber que Ariel las mando dos.
         unicas = sorted(set(repetidas))
-        st.warning(
-            f"La rendición de Ariel traía {len(repetidas)} "
-            f"{'fila repetida idéntica' if len(repetidas) == 1 else 'filas repetidas idénticas'} "
-            f"({len(unicas)} {'guía' if len(unicas) == 1 else 'guías'}): la misma guía cargada dos veces. "
-            "Las conté una sola vez en la liquidación.",
-            icon=":material/content_copy:",
-        )
+        st.warning(_texto_repetidas(repetidas), icon=":material/content_copy:")
         with st.expander("Ver las guías repetidas", key=f"{key}_repetidas"):
             st.write(", ".join(str(g) for g in unicas))
 
     if not ultimo_dia.empty:
-        st.warning(
-            f"Se incluyeron {len(ultimo_dia)} guías de Ariel del último día del mes ({r['ultimo_dia']}) "
-            "por la regla de último día, sin confirmación cruzada: no están en el export de este mes y "
-            "todavía no se cargó el export del mes siguiente para confirmarlas.",
-            icon=":material/warning:",
-        )
+        st.warning(_texto_ultimo_dia(len(ultimo_dia), r["ultimo_dia"]), icon=":material/warning:")
         with st.expander(f"Ver las {len(ultimo_dia)} guías incluidas por la regla de último día", key=f"{key}_ultimo_dia"):
-            vista_ultimo_dia = ultimo_dia.assign(**{"Nro guía": nro_guia_entero(ultimo_dia["Nro guía"])})
-            st.dataframe(vista_ultimo_dia, use_container_width=True, hide_index=True, column_config={
-                "Nro guía": st.column_config.NumberColumn(format="plain"),
-                **{c: st.column_config.NumberColumn(format="localized") for c in ("Kg Ariel", "Ingreso Ariel")},
-            })
+            _tabla_ultimo_dia(ultimo_dia)
 
-    if con_excepciones and r["ingreso_fuera_por_revision"]:
+    if r["ingreso_fuera_por_revision"]:
         st.warning(
             f"Hay guías de Ariel a revisión manual que quedaron FUERA de la liquidación por "
             f"{_money(r['ingreso_fuera_por_revision'])} de ingreso. Revisalas en la tabla de excepciones.",
             icon=":material/warning:",
         )
 
-    if not con_excepciones:
-        pass
-    elif excepciones.empty:
+    if excepciones.empty:
         st.caption("Sin excepciones: todas las guías cruzaron limpio.")
     else:
         st.markdown('<div class="hwc-group-title">Excepciones del cruce</div>', unsafe_allow_html=True)
@@ -1358,6 +1365,61 @@ def _info_archivos(fuentes: dict, export, ariel) -> list[dict]:
     return info
 
 
+def _tabla_ultimo_dia(ultimo_dia: pd.DataFrame) -> None:
+    vista = ultimo_dia.assign(**{"Nro guía": nro_guia_entero(ultimo_dia["Nro guía"])})
+    st.dataframe(vista, use_container_width=True, hide_index=True, column_config={
+        "Nro guía": st.column_config.NumberColumn(format="plain"),
+        **{c: st.column_config.NumberColumn(format="localized") for c in ("Kg Ariel", "Ingreso Ariel")},
+    })
+
+
+def _tabla_guias(guias: pd.DataFrame, key: str) -> None:
+    """La hoja GUIAS, con el numero de guia entero y los importes en formato argentino."""
+    vista = guias.assign(**{"Nro guía": nro_guia_entero(guias["Nro guía"])})
+    st.dataframe(
+        vista, use_container_width=True, hide_index=True, height=min(420, 38 * (len(vista) + 1) + 4), key=key,
+        column_config={"Nro guía": st.column_config.NumberColumn(format="plain")} | {
+            c: st.column_config.NumberColumn(format="localized")
+            for c in vista.columns if pd.api.types.is_float_dtype(vista[c])
+        },
+    )
+
+
+def _datos_usados(tipo_cambio: float, vuelos_inter: dict[str, int], usd_por_vuelo: dict[str, float]) -> str:
+    vuelos = " · ".join(f"{e} {_cuenta_vuelos(n, usd_por_vuelo[e])}" for e, n in vuelos_inter.items())
+    return f"Datos usados: tipo de cambio $ {_num(tipo_cambio)} · {vuelos}."
+
+
+def _render_detalle_jetsmart(
+    cruce: dict, resumen: dict, guias: pd.DataFrame, mensaje_mes_anterior: str | None, anuladas: int,
+    datos_usados: str,
+) -> None:
+    """Todo lo que explica COMO se armo la liquidacion, cerrado por defecto: lo
+    importante ya se vio arriba (estado, numeros, guias para revisar, descarga)."""
+    r = cruce["resumen"]
+    ultimo_dia = cruce["incluidas_ultimo_dia"]
+    repetidas = r.get("ariel_repetidas_identicas") or []
+
+    with st.expander("Cómo se armó el cruce", key="detalle_cruce", icon=":material/compare_arrows:"):
+        st.caption("El cruce compara las guías del sistema con lo que declaró Ariel.")
+        if mensaje_mes_anterior:
+            st.markdown(f":material/history: {mensaje_mes_anterior}")
+        st.markdown(_cruce_card_html(cruce, anuladas), unsafe_allow_html=True)
+        if repetidas:
+            st.caption("Guías repetidas en Ariel: " + ", ".join(str(g) for g in sorted(set(repetidas))))
+        if not ultimo_dia.empty:
+            st.caption(f"Guías incluidas por la regla de último día ({len(ultimo_dia)}):")
+            _tabla_ultimo_dia(ultimo_dia)
+
+    with st.expander("Liquidación: comisiones, GHA y IVA", key="detalle_liquidacion", icon=":material/calculate:"):
+        st.markdown(_jetsmart_resumen_html(resumen), unsafe_allow_html=True)
+
+    with st.expander(f"Tabla de guías ({_num(len(guias), 0)})", key="detalle_guias", icon=":material/table:"):
+        _tabla_guias(guias, key="resultado_guias")
+
+    st.caption(datos_usados)
+
+
 def _render_jetsmart_result(
     conjunto, fuentes: dict, tipo_cambio: float, vuelos_inter: dict[str, int], usd_por_vuelo: dict[str, float],
 ) -> tuple[object, tuple[str, str]]:
@@ -1458,7 +1520,8 @@ def _render_jetsmart_result(
             unsafe_allow_html=True,
         )
     _render_descarga_jetsmart(buffer, period)
-    st.markdown(f":material/history: {mensaje_mes_anterior}")
+
+    # Avisos que no dependen de un detalle: se ven siempre que existan.
     if guardado["liquidacion"] and not guardado["meses"]:
         # La liquidacion quedo guardada, pero las guias del mes no: el mes que viene habria que volver a subirlas.
         st.warning(
@@ -1467,14 +1530,20 @@ def _render_jetsmart_result(
             "Avisale a sistemas.",
             icon=":material/warning:",
         )
-    vuelos_txt = ", ".join(f"{station} {n}" for station, n in vuelos_inter.items())
-    st.caption(
-        f"Período detectado: {period_label(period)} · {len(guias)} guías · "
-        f"TC {_num(tipo_cambio)} y vuelos internacionales ({vuelos_txt}) cargados a mano."
-    )
     _jetsmart_avisos(resumen)
-    _render_cruce(cruce, key="resultado_cruce", con_excepciones=False)
-    st.markdown(_jetsmart_resumen_html(resumen), unsafe_allow_html=True)
+    repetidas = resultado.resumen.get("ariel_repetidas_identicas") or []
+    if repetidas:
+        st.warning(_texto_repetidas(repetidas), icon=":material/content_copy:")
+    if not resultado.incluidas_ultimo_dia.empty:
+        st.warning(
+            _texto_ultimo_dia(len(resultado.incluidas_ultimo_dia), resultado.resumen["ultimo_dia"]),
+            icon=":material/warning:",
+        )
+
+    _render_detalle_jetsmart(
+        cruce, resumen, guias, mensaje_mes_anterior, ariel_leido.anuladas,
+        _datos_usados(tipo_cambio, vuelos_inter, usd_por_vuelo),
+    )
     return buffer, period
 
 
