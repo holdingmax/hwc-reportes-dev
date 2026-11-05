@@ -92,6 +92,7 @@ from src.jetsmart_builder import (
     build_jetsmart_resumen,
     build_jetsmart_resumen_guardado,
     detect_jetsmart_period,
+    guias_guardadas,
     unconfirmed_tarifa_activity,
     write_jetsmart_liquidacion,
 )
@@ -768,7 +769,7 @@ def _obtener_detalle_liquidacion(fila) -> tuple[pd.DataFrame, dict | None, str |
         detalle_totales = obtener_detalle_totales(int(fila["id"]))
         if not detalle_totales:
             return None
-        guias = pd.DataFrame(detalle_totales["guias"])
+        guias = guias_guardadas(detalle_totales["guias"])
         parametros = detalle_totales["parametros"]
         resumen = build_jetsmart_resumen_guardado(guias, parametros)
         resumen["_cruce"] = detalle_totales.get("cruce")
@@ -1053,8 +1054,10 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
             icon=":material/warning:",
         )
         with st.expander(f"Ver las {len(ultimo_dia)} guías incluidas por la regla de último día", key=f"{key}_ultimo_dia"):
-            st.dataframe(ultimo_dia, use_container_width=True, hide_index=True, column_config={
-                c: st.column_config.NumberColumn(format="localized") for c in ("Kg Ariel", "Ingreso Ariel")
+            vista_ultimo_dia = ultimo_dia.assign(**{"Nro guía": nro_guia_entero(ultimo_dia["Nro guía"])})
+            st.dataframe(vista_ultimo_dia, use_container_width=True, hide_index=True, column_config={
+                "Nro guía": st.column_config.NumberColumn(format="plain"),
+                **{c: st.column_config.NumberColumn(format="localized") for c in ("Kg Ariel", "Ingreso Ariel")},
             })
 
     if r["ingreso_fuera_por_revision"]:
@@ -1818,7 +1821,7 @@ with st.container(key="zona_historial"):
                                 column_config={
                                     col: st.column_config.NumberColumn(format="localized")
                                     for col in detalle_df.columns if pd.api.types.is_float_dtype(detalle_df[col])
-                                },
+                                } | ({"Nro guía": st.column_config.NumberColumn(format="plain")} if es_jetsmart else {}),
                             )
 
 

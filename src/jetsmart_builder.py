@@ -46,6 +46,7 @@ from src.config import (
     JETSMART_TARIFA_USD_KG_DEFAULT,
     JETSMART_TARIFA_USD_KG_POR_ESTACION,
 )
+from src.jetsmart_cruce import nro_guia_entero
 from src.period_utils import Period
 
 # Mismas abreviaturas que usa period_utils/db.py para el resto de las
@@ -143,6 +144,17 @@ def build_jetsmart_guias(df: pd.DataFrame) -> pd.DataFrame:
         COL_GUIAS_TOTAL: prioridad + iva,
     })
     return guias.reset_index(drop=True)
+
+
+def guias_guardadas(registros: list[dict]) -> pd.DataFrame:
+    """Hoja GUIAS de una liquidacion guardada (Historial), lista para mostrar y
+    para rearmar el Excel. Al releerla de la base el numero de guia puede volver
+    como decimal (ej. 102176.99999999999): se lleva al entero, como sale en la
+    liquidacion recien generada."""
+    guias = pd.DataFrame(registros)
+    if COL_GUIAS_GUIA in guias.columns:
+        guias[COL_GUIAS_GUIA] = nro_guia_entero(guias[COL_GUIAS_GUIA])
+    return guias
 
 
 def tarifa_usd_kg(station: str) -> tuple[float, bool]:
