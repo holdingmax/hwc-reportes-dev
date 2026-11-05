@@ -22,6 +22,7 @@ formato export. Fuera de alcance: la validacion contra AFIP.
 """
 
 import calendar
+import numbers
 
 import pandas as pd
 from openpyxl.styles import Font
@@ -120,6 +121,14 @@ def detect_jetsmart_period(df: pd.DataFrame) -> tuple[Period, pd.DataFrame]:
     return period, otros_meses
 
 
+def _guia_entera(v):
+    """Numero de guia como entero (redondeado, no cortado: 102176.99999999999
+    es la 102177). Lo que no es numero queda como esta."""
+    if isinstance(v, numbers.Real) and not isinstance(v, bool) and v == v:
+        return int(round(v))
+    return v
+
+
 def build_jetsmart_guias(df: pd.DataFrame) -> pd.DataFrame:
     """Hoja GUIAS: una fila por guia con Kg y el flete ($ Prioridad) gravado.
 
@@ -131,7 +140,7 @@ def build_jetsmart_guias(df: pd.DataFrame) -> pd.DataFrame:
     prioridad = pd.to_numeric(df[COL_JS_PRIORIDAD], errors="coerce").fillna(0.0)
     iva = prioridad * JETSMART_IVA_RATE
     guias = pd.DataFrame({
-        COL_GUIAS_GUIA: df[COL_JS_GUIA].map(lambda v: int(v) if isinstance(v, float) and v.is_integer() else v),
+        COL_GUIAS_GUIA: df[COL_JS_GUIA].map(_guia_entera),
         COL_GUIAS_FECHA: df[COL_JS_CREACION],
         COL_GUIAS_CLIENTE: df[COL_JS_CLIENTE],
         COL_GUIAS_ORIGEN: df[COL_JS_ORIGEN].astype(str).str.strip().str.upper(),
@@ -411,11 +420,19 @@ def _write_comisiones_inter_sheet(writer: pd.ExcelWriter, resumen: dict) -> None
     ws.column_dimensions["E"].width = 16
 
 
+def _guias_enteras(df: pd.DataFrame) -> pd.DataFrame:
+    if COL_GUIAS_GUIA not in df.columns:
+        return df
+    return df.assign(**{COL_GUIAS_GUIA: df[COL_GUIAS_GUIA].map(_guia_entera)})
+
+
 def _write_cruce_sheets(
     writer: pd.ExcelWriter, excepciones: pd.DataFrame, incluidas_ultimo_dia: pd.DataFrame, repetidas_identicas=(),
 ) -> None:
     """Resultado del cruce con Ariel (ver jetsmart_cruce.py): solo las
     excepciones, y aparte las guias incluidas por la regla de ultimo dia."""
+    excepciones = _guias_enteras(excepciones)
+    incluidas_ultimo_dia = _guias_enteras(incluidas_ultimo_dia)
     if excepciones.empty:
         pd.DataFrame({"Excepciones del cruce": ["Sin excepciones: todas las guías cruzaron limpio."]}).to_excel(
             writer, sheet_name="EXCEPCIONES CRUCE", index=False)
@@ -426,7 +443,7 @@ def _write_cruce_sheets(
     if repetidas_identicas:
         # Aviso para quien revise el Excel sin la app: estas guias estaban dos veces en Ariel, identicas.
         pd.DataFrame({
-            "Nro guía": sorted(set(repetidas_identicas)),
+            "Nro guía": sorted({_guia_entera(g) for g in repetidas_identicas}),
             "Aviso": "Ariel la traía repetida (fila idéntica): se contó una sola vez.",
         }).to_excel(writer, sheet_name="REPETIDAS EN ARIEL", index=False)
 
