@@ -32,7 +32,7 @@ def _app() -> AppTest:
 
 
 def _textos(at: AppTest) -> str:
-    return "\n".join([c.value for c in at.caption] + [w.value for w in at.warning])
+    return "\n".join([c.value for c in at.caption] + [w.value for w in at.warning] + [m.value for m in at.markdown if m.value.startswith("**")])
 
 
 def _avisos_control(at: AppTest) -> list[str]:
@@ -171,7 +171,7 @@ class VuelosDesdeElExcelDeAriel(unittest.TestCase):
     def test_control_coincide_con_el_total_del_excel(self):
         _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
         textos = _textos(self.at)
-        self.assertEqual(textos.count("Coincide con el total del Excel de Ariel"), 2)  # EZE 857,5 y MDZ 945
+        self.assertEqual(textos.count("✔ coincide con el Excel de Ariel"), 2)  # EZE 857,5 y MDZ 945
         self.assertEqual(_avisos_control(self.at), [])
 
     def test_control_que_no_coincide_avisa_con_los_dos_valores_y_no_bloquea(self):
@@ -183,7 +183,7 @@ class VuelosDesdeElExcelDeAriel(unittest.TestCase):
         self.assertIn("857,5 USD", avisos[0])
         self.assertIn("No coincide con el total del Excel de Ariel", avisos[0])
         # El otro total sigue coincidiendo, y no se toco ningun valor.
-        self.assertEqual(_textos(self.at).count("Coincide con el total del Excel de Ariel"), 1)
+        self.assertEqual(_textos(self.at).count("✔ coincide con el Excel de Ariel"), 1)
         self.assertEqual(self.at.number_input(key="js_vuelos_EZE").value, 49)
         self.assertEqual(len(self.at.exception), 0)
 
@@ -197,7 +197,7 @@ class VuelosDesdeElExcelDeAriel(unittest.TestCase):
 
     def test_sin_total_en_el_excel_no_hay_control(self):
         _subir(self.at, (ARIEL_SEP.name, ARIEL_SEP.read_bytes()))  # EZE sin total en USD; MDZ 33 x 35 = 1155
-        self.assertEqual(_textos(self.at).count("Coincide con el total del Excel de Ariel"), 1)
+        self.assertEqual(_textos(self.at).count("✔ coincide con el Excel de Ariel"), 1)
         self.assertEqual(_avisos_control(self.at), [])
 
     def test_sin_excel_de_ariel_no_hay_control(self):
@@ -205,6 +205,50 @@ class VuelosDesdeElExcelDeAriel(unittest.TestCase):
         self.at.number_input(key="js_vuelos_EZE").set_value(12).run()
         self.assertNotIn("total del Excel de Ariel", _textos(self.at))
 
+
+def _expanders_a_mano(at: AppTest):
+    return [e for e in at.get("expander") if e.label == "Cambiar a mano"]
+
+
+@unittest.skipUnless(ARIEL_OCT.exists() and GUIAS_OCT.exists(), "faltan los archivos reales")
+class CantidadConfirmadaDesdeAriel(unittest.TestCase):
+    """La cantidad leida del Excel de Ariel se muestra como dato confirmado; los campos quedan en "Cambiar a mano"."""
+
+    def setUp(self):
+        self._env = mock.patch.dict(os.environ)
+        self._env.start()
+        os.environ.pop("DATABASE_URL", None)
+        self.at = _app()
+
+    def tearDown(self):
+        self._env.stop()
+
+    def test_muestra_la_cuenta_como_dato_confirmado(self):
+        _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
+        textos = _textos(self.at)
+        self.assertIn("EZE: 49 vuelos × 17,5 USD = 857,5 USD** ✔ coincide con el Excel de Ariel", textos)
+        self.assertIn("MDZ: 27 vuelos × 35 USD = 945 USD** ✔ coincide con el Excel de Ariel", textos)
+
+    def test_los_campos_editables_quedan_en_un_expander_cerrado(self):
+        _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
+        expanders = _expanders_a_mano(self.at)
+        self.assertEqual(len(expanders), 2)
+        for e in expanders:
+            self.assertFalse(e.proto.expanded)
+            self.assertEqual([n.label for n in e.number_input], ["Cantidad de vuelos", "USD por vuelo"])
+
+    def test_se_puede_cambiar_a_mano_y_la_cuenta_lo_sigue(self):
+        _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
+        self.at.number_input(key="js_vuelos_EZE").set_value(48).run()
+        textos = _textos(self.at)
+        self.assertIn("EZE: 48 vuelos × 17,5 USD = 840 USD**", textos)
+        self.assertNotIn("EZE: 48 vuelos × 17,5 USD = 840 USD** ✔", textos)  # ya no coincide con Ariel
+
+    def test_sin_cantidad_de_ariel_los_campos_siguen_a_la_vista(self):
+        _subir(self.at, (GUIAS_OCT.name, GUIAS_OCT.read_bytes()))
+        self.assertEqual(_expanders_a_mano(self.at), [])
+        self.assertNotIn("✔", _textos(self.at))
+        self.assertEqual(self.at.number_input(key="js_vuelos_EZE").label, "Cantidad de vuelos")
 
 
 if __name__ == "__main__":

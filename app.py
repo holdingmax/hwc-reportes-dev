@@ -703,14 +703,28 @@ def _origen_vuelos(leido, cantidad: int) -> None:
         )
 
 
-def _control_total_vuelos(leido, cantidad: int, usd_por_vuelo: float) -> None:
+def _coincide_con_total(leido, cantidad: int, usd_por_vuelo: float) -> bool:
+    """¿cantidad x USD por vuelo da el total en USD que trae el Excel de Ariel?"""
+    return leido is not None and leido.total_usd is not None and abs(cantidad * usd_por_vuelo - leido.total_usd) < 0.005
+
+
+def _linea_confirmada(station: str, leido, cantidad: int, usd_por_vuelo: float) -> None:
+    """Cantidad leida del Excel de Ariel, mostrada como dato confirmado (no como
+    campo a completar): "EZE: 49 vuelos × 17,5 USD = 857,5 USD ✔ coincide con el Excel de Ariel"."""
+    ok = " ✔ coincide con el Excel de Ariel" if _coincide_con_total(leido, cantidad, usd_por_vuelo) else ""
+    st.markdown(f"**{station}: {_cuenta_vuelos(cantidad, usd_por_vuelo)}**{ok}")
+
+
+def _control_total_vuelos(leido, cantidad: int, usd_por_vuelo: float, *, mostrar_ok: bool = True) -> None:
     """Compara cantidad x USD por vuelo con el total en USD que trae el Excel de
-    Ariel. Es solo un control: avisa, no bloquea ni cambia ningun valor."""
+    Ariel. Es solo un control: avisa, no bloquea ni cambia ningun valor.
+    mostrar_ok=False: cuando coincide no repite nada (ya lo dice la linea confirmada)."""
     if leido is None or leido.total_usd is None:
         return
     calculado = cantidad * usd_por_vuelo
     if abs(calculado - leido.total_usd) < 0.005:
-        st.caption(f":material/check_circle: Coincide con el total del Excel de Ariel ({_num_libre(leido.total_usd)} USD).")
+        if mostrar_ok:
+                st.caption(f":material/check_circle: Coincide con el total del Excel de Ariel ({_num_libre(leido.total_usd)} USD).")
     else:
         st.warning(
             f"No coincide con el total del Excel de Ariel: acá da {_num_libre(calculado)} USD "
@@ -1607,22 +1621,33 @@ with st.container(key="zona_carga"):
             tipo_cambio = st.number_input("Tipo de cambio del período (ARS por USD)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
             for station, usd_default in JETSMART_COMISION_INTER_USD_POR_VUELO.items():
                 st.markdown(f"**Vuelos internacionales {station}**")
-                col_cant, col_usd = st.columns(2)
-                with col_cant:
-                    # Entera: no hay medio vuelo.
-                    vuelos_inter[station] = int(st.number_input(
-                        "Cantidad de vuelos", min_value=0, step=1, key=f"js_vuelos_{station}",
-                    ))
-                with col_usd:
-                    usd_por_vuelo[station] = float(st.number_input(
-                        "USD por vuelo", min_value=0.0, value=float(usd_default), step=0.5, format="%.2f",
-                        key=f"js_usd_{station}",
-                    ))
-                _origen_vuelos(vuelos_ariel.get(station), vuelos_inter[station])
-                st.caption(_cuenta_vuelos(vuelos_inter[station], usd_por_vuelo[station]))
-                _control_total_vuelos(vuelos_ariel.get(station), vuelos_inter[station], usd_por_vuelo[station])
-                if vuelos_inter[station] > JETSMART_VUELOS_INTER_AVISO_CANTIDAD:
-                    st.warning("¿Es la cantidad o el importe?", icon=":material/warning:")
+                leido = vuelos_ariel.get(station)
+                confirmado = leido is not None and leido.cantidad is not None
+                # Con la cantidad leida del Excel de Ariel: primero el dato confirmado y los
+                # campos escondidos en "Cambiar a mano". Sin Excel: los campos a la vista.
+                resumen_vuelos = st.container() if confirmado else None
+                zona_campos = st.expander("Cambiar a mano", key=f"js_cambiar_{station}") if confirmado else st.container()
+                with zona_campos:
+                    col_cant, col_usd = st.columns(2)
+                    with col_cant:
+                        # Entera: no hay medio vuelo.
+                        vuelos_inter[station] = int(st.number_input(
+                            "Cantidad de vuelos", min_value=0, step=1, key=f"js_vuelos_{station}",
+                        ))
+                    with col_usd:
+                        usd_por_vuelo[station] = float(st.number_input(
+                            "USD por vuelo", min_value=0.0, value=float(usd_default), step=0.5, format="%.2f",
+                            key=f"js_usd_{station}",
+                        ))
+                with resumen_vuelos if confirmado else st.container():
+                    if confirmado:
+                        _linea_confirmada(station, leido, vuelos_inter[station], usd_por_vuelo[station])
+                    _origen_vuelos(leido, vuelos_inter[station])
+                    if not confirmado:
+                        st.caption(_cuenta_vuelos(vuelos_inter[station], usd_por_vuelo[station]))
+                    _control_total_vuelos(leido, vuelos_inter[station], usd_por_vuelo[station], mostrar_ok=not confirmado)
+                    if vuelos_inter[station] > JETSMART_VUELOS_INTER_AVISO_CANTIDAD:
+                        st.warning("¿Es la cantidad o el importe?", icon=":material/warning:")
 
     if es_jetsmart_sel:
         requisitos = _requisitos_jetsmart(conjunto, bool(fuentes), tipo_cambio)
