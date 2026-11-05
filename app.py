@@ -34,6 +34,7 @@ Render.
 
 import base64
 import hashlib
+import html
 import io
 import os
 
@@ -96,6 +97,7 @@ from src.jetsmart_builder import (
     unconfirmed_tarifa_activity,
     write_jetsmart_liquidacion,
 )
+from src.jetsmart_revision import filas_para_revisar, resumen_por_tipo
 from src.jetsmart_vuelos_ariel import leer_vuelos_ariel
 from src.loader import load_original
 from src.period_utils import extract_period, period_label, period_slug
@@ -527,6 +529,29 @@ div[data-baseweb="select"] > div {{ border-radius: 8px !important; }}
 .hwc-secondary {{ font-size: 0.84rem; color: var(--hwc-text-muted); margin: 0.6rem 0 1rem 0.2rem; }}
 .hwc-secondary b {{ color: var(--hwc-text); font-weight: 600; font-variant-numeric: tabular-nums; }}
 .st-key-resultado_descarga button {{ min-height: 3.2rem; font-size: 1.05rem; font-weight: 700; }}
+
+/* "Para revisar": bloque de alerta (ambar) antes del detalle. La tabla es HTML
+   para que el texto largo se ajuste al ancho en vez de cortarse. */
+.hwc-review {{
+    background: #FFF8EA; border: 1.5px solid #E8C98A; border-left: 6px solid var(--hwc-warning);
+    border-radius: 14px; padding: 1rem 1.2rem; margin: 0 0 1rem 0;
+}}
+.hwc-review-title {{ font-weight: 800; font-size: 1.05rem; color: #7A4E0C; }}
+.hwc-review-help {{ font-size: 0.84rem; color: #6F5A2E; margin: 0.2rem 0 0.65rem 0; line-height: 1.4; }}
+.hwc-chips {{ display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.7rem; }}
+.hwc-chip {{
+    background: #FBF0DC; border: 1px solid #E8C98A; color: #7A4E0C;
+    border-radius: 100px; padding: 0.15rem 0.7rem; font-size: 0.78rem; font-weight: 700;
+}}
+.hwc-review-scroll {{ max-height: 330px; overflow: auto; border-radius: 10px; border: 1px solid #EBD9B0; background: #fff; }}
+.hwc-review-table {{ width: 100%; border-collapse: collapse; font-size: 0.82rem; color: var(--hwc-text); }}
+.hwc-review-table th {{
+    position: sticky; top: 0; background: #FBF0DC; text-align: left; padding: 0.45rem 0.6rem;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: #7A4E0C;
+}}
+.hwc-review-table td {{ padding: 0.45rem 0.6rem; border-top: 1px solid #F1E6CC; vertical-align: top; line-height: 1.35; }}
+.hwc-review-table td.hwc-num {{ font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }}
+.hwc-review-note {{ font-size: 0.8rem; color: #6F5A2E; margin-top: 0.6rem; }}
 
 /* --- Footer --- */
 .hwc-footer {{
@@ -964,6 +989,32 @@ def _render_numeros_clave(resumen: dict, n_guias: int, n_revisar: int) -> None:
     )
 
 
+def _html_para_revisar(excepciones: pd.DataFrame, ingreso_fuera: float) -> str:
+    """Bloque de alerta con las guias que hay que mirar y que hacer con cada una."""
+    filas = filas_para_revisar(excepciones)
+    chips = "".join(f'<span class="hwc-chip">{html.escape(t)}</span>' for t in resumen_por_tipo(excepciones))
+    cuerpo = "".join(
+        f'<tr><td class="hwc-num">{"" if f["guia"] is None else f["guia"]}</td>'
+        f'<td>{html.escape(f["que_pasa"])}</td><td>{html.escape(f["entra"])}</td><td>{html.escape(f["que_hacer"])}</td></tr>'
+        for f in filas
+    )
+    nota = (
+        f'<div class="hwc-review-note">Quedaron fuera de la liquidación {_money(ingreso_fuera)} de ingreso '
+        "por guías que hay que revisar a mano.</div>"
+        if ingreso_fuera else ""
+    )
+    return (
+        '<div class="hwc-review">'
+        f'<div class="hwc-review-title">Para revisar: {_plural_guias(len(filas))}</div>'
+        '<div class="hwc-review-help">Son guías que no coinciden entre el sistema y lo que declaró Ariel '
+        "(el cruce de los dos listados). Acá ves qué pasó con cada una y qué hacer.</div>"
+        f'<div class="hwc-chips">{chips}</div>'
+        '<div class="hwc-review-scroll"><table class="hwc-review-table"><thead><tr>'
+        "<th>Guía</th><th>Qué pasa</th><th>¿Entra?</th><th>Qué hacer</th></tr></thead>"
+        f"<tbody>{cuerpo}</tbody></table></div>{nota}</div>"
+    )
+
+
 def _render_descarga_jetsmart(buffer, period: tuple[str, str]) -> None:
     st.download_button(
         label="Descargar Excel",
@@ -1130,9 +1181,12 @@ def _cruce_to_frames(cruce: dict) -> dict:
     }
 
 
-def _render_cruce(cruce: dict, *, key: str) -> None:
+def _render_cruce(cruce: dict, *, key: str, con_excepciones: bool = True) -> None:
     """Resultado del cruce con Ariel: resumen, aviso de la regla de ultimo
-    dia y SOLO las excepciones (lo que matchea limpio no se muestra)."""
+    dia y SOLO las excepciones (lo que matchea limpio no se muestra).
+
+    con_excepciones=False: sin la tabla de excepciones ni el aviso del ingreso
+    fuera (la pantalla de resultado las muestra aparte, en "Para revisar")."""
     r = cruce["resumen"]
     excepciones = cruce["excepciones"]
     ultimo_dia = cruce["incluidas_ultimo_dia"]
@@ -1183,14 +1237,16 @@ def _render_cruce(cruce: dict, *, key: str) -> None:
                 **{c: st.column_config.NumberColumn(format="localized") for c in ("Kg Ariel", "Ingreso Ariel")},
             })
 
-    if r["ingreso_fuera_por_revision"]:
+    if con_excepciones and r["ingreso_fuera_por_revision"]:
         st.warning(
             f"Hay guías de Ariel a revisión manual que quedaron FUERA de la liquidación por "
             f"{_money(r['ingreso_fuera_por_revision'])} de ingreso. Revisalas en la tabla de excepciones.",
             icon=":material/warning:",
         )
 
-    if excepciones.empty:
+    if not con_excepciones:
+        pass
+    elif excepciones.empty:
         st.caption("Sin excepciones: todas las guías cruzaron limpio.")
     else:
         st.markdown('<div class="hwc-group-title">Excepciones del cruce</div>', unsafe_allow_html=True)
@@ -1396,6 +1452,11 @@ def _render_jetsmart_result(
     n_revisar = resultado.resumen["excepciones"]
     _render_estado_general(period, n_revisar, texto_guardado, guardado_ok)
     _render_numeros_clave(resumen, len(guias), n_revisar)
+    if n_revisar:
+        st.markdown(
+            _html_para_revisar(resultado.excepciones, resultado.resumen["ingreso_fuera_por_revision"]),
+            unsafe_allow_html=True,
+        )
     _render_descarga_jetsmart(buffer, period)
     st.markdown(f":material/history: {mensaje_mes_anterior}")
     if guardado["liquidacion"] and not guardado["meses"]:
@@ -1412,7 +1473,7 @@ def _render_jetsmart_result(
         f"TC {_num(tipo_cambio)} y vuelos internacionales ({vuelos_txt}) cargados a mano."
     )
     _jetsmart_avisos(resumen)
-    _render_cruce(cruce, key="resultado_cruce")
+    _render_cruce(cruce, key="resultado_cruce", con_excepciones=False)
     st.markdown(_jetsmart_resumen_html(resumen), unsafe_allow_html=True)
     return buffer, period
 

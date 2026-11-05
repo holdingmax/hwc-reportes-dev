@@ -11,6 +11,7 @@ version se reemplazan por dobles.
 
 import dataclasses
 import os
+import re
 import unittest
 from datetime import datetime, timezone
 from unittest import mock
@@ -147,9 +148,38 @@ class ResultadoJetSmart(unittest.TestCase):
                     orden.append("banner")
                 elif "hwc-numcard-hero" in valor:
                     orden.append("tarjetas")
+                elif 'class="hwc-review"' in valor:
+                    orden.append("para_revisar")
 
         recorrer(at.main)
-        self.assertEqual(orden, ["banner", "tarjetas", "boton"])
+        self.assertEqual(orden, ["banner", "tarjetas", "para_revisar", "boton"])
+
+    def test_para_revisar_lista_cada_guia_con_que_hacer(self):
+        at = self._procesar()
+        bloque = _htmls(at, 'class="hwc-review"')
+        self.assertEqual(len(bloque), 1)
+        bloque = bloque[0]
+        self.assertIn("Para revisar: 10 guías", bloque)
+        for columna in ("Guía", "Qué pasa", "¿Entra?", "Qué hacer"):
+            self.assertIn(f"<th>{columna}</th>", bloque)
+        self.assertEqual(bloque.count("<tr><td"), 10)  # una fila por guia
+        self.assertEqual(bloque.count("Esperá a que Ariel la declare"), bloque.count("Ariel todavía no la declaró"))
+        # Los numeros de guia, enteros y sin decimales.
+        numeros = re.findall(r'<td class="hwc-num">([^<]*)</td>', bloque)
+        self.assertEqual(len(numeros), 10)
+        self.assertTrue(all(n.isdigit() for n in numeros), numeros)
+        # Palabras de Anita: el cruce se explica, y no aparece la jerga "excepcion".
+        self.assertIn("el cruce de los dos listados", bloque)
+        self.assertNotIn("xcepci", bloque)
+
+    def test_sin_guias_para_revisar_no_hay_bloque(self):
+        at = self._procesar(sin_excepciones=True)
+        self.assertEqual(_htmls(at, 'class="hwc-review"'), [])
+
+    def test_la_tabla_de_excepciones_ya_no_se_repite_mas_abajo(self):
+        at = self._procesar()
+        self.assertFalse(any("Excepciones del cruce" in m.value for m in at.markdown))
+        self.assertEqual(len(at.dataframe), 0)
 
 
 if __name__ == "__main__":
