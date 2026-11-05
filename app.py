@@ -487,6 +487,47 @@ div[data-baseweb="select"] > div {{ border-radius: 8px !important; }}
     padding: 1.2rem 1.3rem; margin-top: 0.6rem;
 }}
 
+/* --- Resultado de JetSmart: estado general, numeros clave y "para revisar".
+   Verde = salio bien, ambar = hay que revisar (mismos tonos que los puntos
+   de las cards de resumen); el azul oscuro es el del encabezado. El color
+   nunca va solo: cada estado lleva su icono y su texto. --- */
+.hwc-banner {{
+    display: flex; align-items: center; gap: 0.85rem;
+    border-radius: 14px; padding: 0.95rem 1.2rem; border: 1.5px solid;
+    font-size: 1.2rem; font-weight: 800; line-height: 1.25;
+}}
+.hwc-banner-icon {{
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 32px; height: 32px; border-radius: 50%; color: #fff; font-size: 1.05rem; font-weight: 800;
+}}
+.hwc-banner-ok {{ background: #E3F4EB; border-color: var(--hwc-success); color: #14653F; }}
+.hwc-banner-ok .hwc-banner-icon {{ background: var(--hwc-success); }}
+.hwc-banner-warn {{ background: #FBF0DC; border-color: var(--hwc-warning); color: #7A4E0C; }}
+.hwc-banner-warn .hwc-banner-icon {{ background: var(--hwc-warning); }}
+.hwc-banner-sub {{ font-size: 0.82rem; color: var(--hwc-text-muted); margin: 0.4rem 0 1rem 0.35rem; }}
+.hwc-banner-sub-warn {{ color: #7A4E0C; font-weight: 600; }}
+
+.hwc-numcard {{
+    border-radius: 14px; padding: 1.05rem 1.15rem; border: 1px solid var(--hwc-border);
+    background: #fff; min-height: 6.6rem; display: flex; flex-direction: column; justify-content: center;
+}}
+.hwc-numcard-value {{
+    font-size: 2.1rem; font-weight: 800; line-height: 1.1; color: var(--hwc-blue-text);
+    font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}}
+.hwc-numcard-cents {{ font-size: 1.05rem; font-weight: 700; opacity: 0.8; }}
+.hwc-numcard-label {{ font-size: 0.85rem; font-weight: 600; color: var(--hwc-text-muted); margin-top: 0.4rem; }}
+.hwc-numcard-hero {{ background: linear-gradient(135deg, var(--hwc-blue-deep) 0%, var(--hwc-blue) 100%); border: none; }}
+.hwc-numcard-hero .hwc-numcard-value {{ color: #fff; font-size: 1.85rem; }}
+.hwc-numcard-hero .hwc-numcard-label {{ color: rgba(255, 255, 255, 0.82); }}
+.hwc-numcard-ok {{ background: #E3F4EB; border-color: #B7DEC8; }}
+.hwc-numcard-ok .hwc-numcard-value {{ color: #14653F; }}
+.hwc-numcard-warn {{ background: #FBF0DC; border-color: #E8C98A; }}
+.hwc-numcard-warn .hwc-numcard-value {{ color: #8A5A12; }}
+.hwc-secondary {{ font-size: 0.84rem; color: var(--hwc-text-muted); margin: 0.6rem 0 1rem 0.2rem; }}
+.hwc-secondary b {{ color: var(--hwc-text); font-weight: 600; font-variant-numeric: tabular-nums; }}
+.st-key-resultado_descarga button {{ min-height: 3.2rem; font-size: 1.05rem; font-weight: 700; }}
+
 /* --- Footer --- */
 .hwc-footer {{
     text-align: center; color: var(--hwc-text-muted); font-size: 0.78rem;
@@ -850,6 +891,88 @@ def _render_exito(airline_key: str, period: tuple[str, str], buffer) -> None:
         file_name=f"{airline_key}_{period_slug(period)}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
+        # Sin rerun al descargar: el resultado sigue en pantalla.
+        on_click="ignore",
+        key="resultado_descarga",
+    )
+
+
+def _money_grande(value: float) -> str:
+    """Monto para una tarjeta grande: los pesos enteros bien grandes y los
+    centavos chicos al lado, para que entre en la tarjeta sin perder el dato."""
+    entero, _, centavos = _num(value).rpartition(",")
+    return f'$ {entero}<span class="hwc-numcard-cents">,{centavos}</span>'
+
+
+def _numcard(valor_html: str, etiqueta: str, variante: str = "") -> str:
+    return (
+        f'<div class="hwc-numcard {("hwc-numcard-" + variante) if variante else ""}">'
+        f'<div class="hwc-numcard-value">{valor_html}</div>'
+        f'<div class="hwc-numcard-label">{etiqueta}</div></div>'
+    )
+
+
+def _plural_guias(n: int) -> str:
+    return f"{_num(n, 0)} {'guía' if n == 1 else 'guías'}"
+
+
+def _texto_guardado(guardado: dict, period: tuple[str, str]) -> tuple[str, bool]:
+    """Linea chica bajo el banner: que version quedo guardada y cuando (y, si la
+    base no respondio, que hay que descargar el Excel). Solo lee la base: la
+    version se afirma unicamente si las guias del mes tambien se guardaron, para
+    no mostrar la de una corrida anterior."""
+    if not guardado["liquidacion"]:
+        return "No se guardó en el Historial (la base no responde). Descargá el Excel para no perderla.", False
+    if guardado["meses"]:
+        lectura = obtener_mes_anterior_jetsmart(period)
+        if lectura.estado == "ok" and lectura.resumen and lectura.resumen.origen_dato == ORIGEN_LIQUIDACION:
+            return f"Versión {lectura.resumen.version}, guardada el {fecha_corta(lectura.resumen.creado_en)}", True
+    return "Guardada en el Historial.", True
+
+
+def _render_estado_general(period: tuple[str, str], n_revisar: int, texto_guardado: str, guardado_ok: bool) -> None:
+    """Banner de color de arriba de todo: verde si no hay nada para revisar, ambar si hay guias."""
+    if n_revisar:
+        clase, icono = "warn", "!"
+        titulo = f"Liquidación lista, pero hay {_plural_guias(n_revisar)} para revisar"
+    else:
+        clase, icono = "ok", "✓"
+        titulo = f"Liquidación de {period_label(period)} lista"
+    sub_clase = "" if guardado_ok else " hwc-banner-sub-warn"
+    st.markdown(
+        f'<div class="hwc-banner hwc-banner-{clase}"><span class="hwc-banner-icon">{icono}</span><span>{titulo}</span></div>'
+        f'<div class="hwc-banner-sub{sub_clase}">{texto_guardado}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_numeros_clave(resumen: dict, n_guias: int, n_revisar: int) -> None:
+    """Tres tarjetas grandes (el total a entregar, las guias liquidadas y las
+    que hay que revisar) y, mas chico, el total de CVLP."""
+    col_total, col_guias, col_revisar = st.columns([1.5, 1, 1])
+    with col_total:
+        st.markdown(_numcard(_money_grande(resumen["total_wcs"]), "Total a entregar a WCS", "hero"), unsafe_allow_html=True)
+    with col_guias:
+        st.markdown(_numcard(_num(n_guias, 0), "Guías liquidadas"), unsafe_allow_html=True)
+    with col_revisar:
+        st.markdown(
+            _numcard(_num(n_revisar, 0), "Para revisar", "warn" if n_revisar else "ok"), unsafe_allow_html=True,
+        )
+    st.markdown(
+        f'<div class="hwc-secondary">CVLP, total final con IVA: <b>{_money(resumen["cvlp"]["total_final"])}</b></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_descarga_jetsmart(buffer, period: tuple[str, str]) -> None:
+    st.download_button(
+        label="Descargar Excel",
+        icon=":material/download:",
+        data=buffer,
+        file_name=f"jetsmart_{period_slug(period)}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+        width="stretch",
         # Sin rerun al descargar: el resultado sigue en pantalla.
         on_click="ignore",
         key="resultado_descarga",
@@ -1269,7 +1392,11 @@ def _render_jetsmart_result(
             meses=meses_a_guardar,
         )
 
-    _render_exito("jetsmart", period, buffer)
+    texto_guardado, guardado_ok = _texto_guardado(guardado, period)
+    n_revisar = resultado.resumen["excepciones"]
+    _render_estado_general(period, n_revisar, texto_guardado, guardado_ok)
+    _render_numeros_clave(resumen, len(guias), n_revisar)
+    _render_descarga_jetsmart(buffer, period)
     st.markdown(f":material/history: {mensaje_mes_anterior}")
     if guardado["liquidacion"] and not guardado["meses"]:
         # La liquidacion quedo guardada, pero las guias del mes no: el mes que viene habria que volver a subirlas.
