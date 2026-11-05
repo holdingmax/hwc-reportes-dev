@@ -12,6 +12,7 @@ faltan.
 """
 
 import os
+import re
 import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -559,17 +560,18 @@ class PantallaConMesAnteriorGuardado(unittest.TestCase):
         self.assertEqual(sum(r.values()), 1953)
         self.assertIn("19", html.split("Pendientes del mes anterior, declaradas ahora")[1][:200])
 
-    def test_tabla_de_excepciones_muestra_el_nro_de_guia_entero(self):
+    def test_tabla_para_revisar_muestra_el_nro_de_guia_entero(self):
+        # Antes era la tabla de excepciones (st.dataframe); ahora es la tabla del bloque "Para revisar".
         at = self._app([G_OCT, A_OCT])
         at.number_input[0].set_value(1485.0)
         at.run()
         at.button[0].click()
         at.run()
-        tablas = [d.value for d in at.dataframe if "Nro guía" in d.value.columns and "Tipo" in d.value.columns]
-        self.assertTrue(tablas, "no se mostro la tabla de excepciones")
-        nros = tablas[0]["Nro guía"]
-        self.assertTrue(pd.api.types.is_integer_dtype(nros), f"dtype {nros.dtype}")
-        self.assertTrue(all(float(n).is_integer() for n in nros))
+        bloques = [m.value for m in at.markdown if 'class="hwc-review"' in m.value and "<style>" not in m.value]
+        self.assertEqual(len(bloques), 1, "no se mostro la tabla de guias para revisar")
+        nros = re.findall(r'<td class="hwc-num">([^<]*)</td>', bloques[0])
+        self.assertTrue(nros)
+        self.assertTrue(all(n.isdigit() for n in nros), nros)  # enteros, sin decimales ni separadores
 
     def test_si_no_se_pudieron_guardar_las_guias_del_mes_avisa(self):
         self.guardar.return_value = {"liquidacion": True, "meses": False}
