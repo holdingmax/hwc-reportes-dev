@@ -18,6 +18,7 @@ from unittest import mock
 
 from streamlit.testing.v1.element_tree import Block
 
+import src.db as src_db
 from src.jetsmart_cruce import cruzar_jetsmart
 from src.jetsmart_mes_anterior import LecturaMesAnterior, ResumenMesAnterior
 from tests.test_jetsmart_pantalla import ARCHIVOS, _app
@@ -245,13 +246,35 @@ class ResultadoJetSmart(unittest.TestCase):
         self.assertEqual(len(df), 1953)
         self.assertTrue(all(v.isdigit() for v in df["Nro guía"]), "la guia debe verse sin decimales")
 
-    def test_datos_usados_en_una_linea_chica(self):
-        at = self._procesar(vuelos=(49, 27))
+    def test_datos_usados_con_el_desglose_de_la_hoja_de_anita(self):
+        at = self._procesar()  # las cantidades que precarga el Excel de Ariel (EZE 25 + 24, MDZ 27)
         lineas = [c.value for c in at.caption if c.value.startswith("Datos usados:")]
         self.assertEqual(len(lineas), 1)
-        self.assertIn("tipo de cambio $ 1.485,00", lineas[0])
-        self.assertIn("EZE 49 vuelos × 17,5 USD = 857,5 USD", lineas[0])
-        self.assertIn("MDZ 27 vuelos × 35 USD = 945 USD", lineas[0])
+        self.assertEqual(
+            lineas[0],
+            "Datos usados: tipo de cambio $ 1.485,00 · EZE Exportación 25 × 17,5 USD + Importación 24 × 17,5 USD = 857,5 USD"
+            " · MDZ 27 vuelos × 35 USD = 945 USD.",
+        )
+        self.assertNotIn("49", lineas[0])
+
+    def test_datos_usados_si_se_cambio_la_cantidad_a_mano_queda_la_linea_simple(self):
+        at = self._procesar(vuelos=(48, 27))
+        linea = next(c.value for c in at.caption if c.value.startswith("Datos usados:"))
+        self.assertIn("EZE 48 vuelos × 17,5 USD = 840 USD", linea)
+        self.assertNotIn("Exportación", linea)
+        self.assertIn("MDZ 27 vuelos × 35 USD = 945 USD", linea)  # MDZ no se toco
+
+    def test_el_desglose_se_guarda_en_los_parametros_para_el_historial(self):
+        at = self._procesar()
+        guardar = src_db.guardar_liquidacion_jetsmart
+        parametros = guardar.call_args.kwargs["parametros"]
+        self.assertEqual(parametros["vuelos_desglose"], {"EZE": [["Exportación", 25], ["Importación", 24]]})
+        self.assertEqual(parametros["vuelos_inter"], {"EZE": 49, "MDZ": 27})  # los datos del calculo no cambian
+        self.assertEqual(len(at.exception), 0)
+
+    def test_si_se_cambio_a_mano_no_se_guarda_el_desglose_de_esa_estacion(self):
+        self._procesar(vuelos=(48, 27))
+        self.assertNotIn("vuelos_desglose", src_db.guardar_liquidacion_jetsmart.call_args.kwargs["parametros"])
 
     def test_los_avisos_importantes_siguen_a_la_vista(self):
         at = self._procesar()

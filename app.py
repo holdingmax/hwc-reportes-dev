@@ -916,6 +916,7 @@ def _obtener_detalle_liquidacion(fila) -> tuple[pd.DataFrame, dict | None, str |
         parametros = detalle_totales["parametros"]
         resumen = build_jetsmart_resumen_guardado(guias, parametros)
         resumen["_cruce"] = detalle_totales.get("cruce")
+        resumen["vuelos_desglose"] = parametros.get("vuelos_desglose")  # solo para mostrar
         return guias, resumen, None
 
     movimientos = obtener_movimientos_de_carga(int(fila["carga_id"]))
@@ -1416,9 +1417,50 @@ def _tabla_excepciones(excepciones: pd.DataFrame, key: str) -> None:
     st.dataframe(vista, use_container_width=True, hide_index=True, key=key)
 
 
-def _datos_usados(tipo_cambio: float, vuelos_inter: dict[str, int], usd_por_vuelo: dict[str, float]) -> str:
-    vuelos = " · ".join(f"{e} {_cuenta_vuelos(n, usd_por_vuelo[e])}" for e, n in vuelos_inter.items())
+def _desglose_vuelos(vuelos_inter: dict[str, int]) -> dict[str, list[list]]:
+    """Desglose por bloque de lo leido del Excel de Ariel ({"EZE": [["Exportación", 25], ["Importación", 24]]}),
+    solo de las estaciones cuya cantidad sigue siendo la leida: si se cambio a mano, no hay desglose."""
+    leidos = st.session_state.get("js_vuelos_ariel") or {}
+    return {
+        station: [[nombre_bloque(b), n] for b, n in leido.bloques]
+        for station, leido in leidos.items()
+        if leido.bloques and vuelos_inter.get(station) == leido.cantidad
+    }
+
+
+def _cuenta_con_desglose(station: str, bloques: list, usd_por_vuelo: float) -> str:
+    """"EZE Exportación 25 × 17,5 USD + Importación 24 × 17,5 USD = 857,5 USD" (sin el total de vuelos suelto)."""
+    partes = " + ".join(f"{nombre} {n} × {_num_libre(usd_por_vuelo)} USD" for nombre, n in bloques)
+    total = sum(n for _, n in bloques) * usd_por_vuelo
+    return f"{station} {partes} = {_num_libre(total)} USD"
+
+
+def _datos_usados(
+    tipo_cambio: float, vuelos_inter: dict[str, int], usd_por_vuelo: dict[str, float], desglose: dict | None = None,
+) -> str:
+    """Linea chica del detalle. Con desglose, el mismo del paso 3 (Expo + Impo); si no hay, la cuenta simple."""
+    desglose = desglose or {}
+    vuelos = " · ".join(
+        _cuenta_con_desglose(e, desglose[e], usd_por_vuelo[e]) if desglose.get(e) and sum(n for _, n in desglose[e]) == n
+        else f"{e} {_cuenta_vuelos(n, usd_por_vuelo[e])}"
+        for e, n in vuelos_inter.items()
+    )
     return f"Datos usados: tipo de cambio $ {_num(tipo_cambio)} · {vuelos}."
+
+
+def _datos_usados_historial(resumen: dict) -> str:
+    """Datos usados de una liquidacion guardada. Con el desglose guardado, igual que el resultado;
+    las liquidaciones viejas (sin desglose) quedan con el tipo de cambio solo, como siempre."""
+    desglose = resumen.get("vuelos_desglose")
+    comisiones = resumen.get("comisiones_inter") or []
+    if not desglose or not comisiones:
+        return f"Datos usados: tipo de cambio $ {_num(resumen['tipo_cambio'])}."
+    return _datos_usados(
+        resumen["tipo_cambio"],
+        {c["estacion"]: c["vuelos"] for c in comisiones},
+        {c["estacion"]: c["usd_por_vuelo"] for c in comisiones},
+        desglose,
+    )
 
 
 def _render_detalle_jetsmart(
@@ -1519,6 +1561,7 @@ def _render_jetsmart_result(
 
         guias = build_jetsmart_guias(resultado.incluidas)
         resumen = build_jetsmart_resumen(guias, tipo_cambio, vuelos_inter, usd_por_vuelo)
+        desglose_vuelos = _desglose_vuelos(vuelos_inter)
         cruce = {
             "resumen": resultado.resumen,
             "excepciones": resultado.excepciones,
@@ -1538,7 +1581,12 @@ def _render_jetsmart_result(
             filas_otros_meses=len(otros_meses),
             guias=guias,
             resumen=resumen,
-            parametros={"tipo_cambio": tipo_cambio, "vuelos_inter": vuelos_inter, "usd_por_vuelo": usd_por_vuelo},
+            parametros={
+                "tipo_cambio": tipo_cambio, "vuelos_inter": vuelos_inter, "usd_por_vuelo": usd_por_vuelo,
+                # Solo para mostrar (ningun calculo lo lee): el desglose Expo/Impo, para que el Historial
+                # muestre la misma linea de datos usados. Las liquidaciones viejas no lo traen.
+                **({"vuelos_desglose": desglose_vuelos} if desglose_vuelos else {}),
+            },
             cruce={
                 "resumen": resultado.resumen,
                 "excepciones": resultado.excepciones.astype(object).where(resultado.excepciones.notna(), None).to_dict(orient="records"),
@@ -1572,7 +1620,7 @@ def _render_jetsmart_result(
 
     _render_detalle_jetsmart(
         cruce, resumen, guias, mensaje_mes_anterior, ariel_leido.anuladas,
-        _datos_usados(tipo_cambio, vuelos_inter, usd_por_vuelo),
+        _datos_usados(tipo_cambio, vuelos_inter, usd_por_vuelo, desglose_vuelos),
     )
     return buffer, period
 
@@ -2101,7 +2149,7 @@ with st.container(key="zona_historial"):
                                     _avisos_cruce(cruce_guardado)
                                 _render_detalle_jetsmart(
                                     cruce_guardado, resumen, detalle_df, None, 0,
-                                    f"Datos usados: tipo de cambio $ {_num(resumen['tipo_cambio'])}.", prefijo="hist_detalle",
+                                    _datos_usados_historial(resumen), prefijo="hist_detalle",
                                 )
                             elif resumen is not None:
                                 # Resumen Facturacion (solo LATAM): mismo

@@ -54,14 +54,14 @@ RESUMEN_CRUCE = {
 
 
 class _Historial(unittest.TestCase):
-    def _abrir(self, cruce="con_cruce"):
+    def _abrir(self, cruce="con_cruce", parametros=None):
         fila = pd.DataFrame([{
             "id": 7, "carga_id": 7, "aerolinea": "jetsmart", "estacion": "AR", "tipo_cargo": "jetsmart_liquidacion",
             "periodo_mes": "OCT", "periodo_anio": "26", "periodo": datetime(2026, 10, 1), "cantidad_filas": 3,
             "monto_total": 1000.0, "es_vigente": True, "generado_en": pd.Timestamp("2026-11-04 12:00"),
         }])
         detalle = {
-            "guias": GUIAS, "parametros": {"tipo_cambio": 1000.0, "vuelos_inter": {}},
+            "guias": GUIAS, "parametros": parametros or {"tipo_cambio": 1000.0, "vuelos_inter": {}},
             "cruce": None if cruce is None else {
                 "resumen": RESUMEN_CRUCE, "excepciones": EXCEPCIONES, "incluidas_ultimo_dia": ULTIMO_DIA,
             },
@@ -195,3 +195,32 @@ class MismosComponentesQueElResultado(_Historial):
         self.assertEqual(len(exp), 3, list(exp))
         for e in exp.values():
             self.assertFalse(e.proto.expanded, e.label)
+
+
+class DatosUsadosConDesglose(_Historial):
+    """La linea "Datos usados" del Historial usa el mismo desglose que el paso 3 y el resultado."""
+
+    BASE = {"tipo_cambio": 1485.0, "vuelos_inter": {"EZE": 49, "MDZ": 27}, "usd_por_vuelo": {"EZE": 17.5, "MDZ": 35.0}}
+
+    def _linea(self, at):
+        return next(c.value for c in at.caption if c.value.startswith("Datos usados:"))
+
+    def test_con_el_desglose_guardado_muestra_expo_impo_y_mdz(self):
+        parametros = {**self.BASE, "vuelos_desglose": {"EZE": [["Exportación", 25], ["Importación", 24]]}}
+        linea = self._linea(self._abrir(parametros=parametros))
+        self.assertEqual(
+            linea,
+            "Datos usados: tipo de cambio $ 1.485,00 · EZE Exportación 25 × 17,5 USD + Importación 24 × 17,5 USD = 857,5 USD"
+            " · MDZ 27 vuelos × 35 USD = 945 USD.",
+        )
+        self.assertNotIn("49", linea)
+
+    def test_una_liquidacion_vieja_sin_desglose_queda_como_siempre(self):
+        linea = self._linea(self._abrir(parametros=self.BASE))
+        self.assertEqual(linea, "Datos usados: tipo de cambio $ 1.485,00.")
+
+    def test_si_el_desglose_no_suma_la_cantidad_guardada_no_se_usa(self):
+        parametros = {**self.BASE, "vuelos_desglose": {"EZE": [["Exportación", 25], ["Importación", 20]]}}
+        linea = self._linea(self._abrir(parametros=parametros))
+        self.assertIn("EZE 49 vuelos × 17,5 USD = 857,5 USD", linea)
+        self.assertNotIn("Exportación", linea)
