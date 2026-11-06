@@ -206,21 +206,27 @@ class DatosUsadosConDesglose(_Historial):
         return next(c.value for c in at.caption if c.value.startswith("Datos usados:"))
 
     def test_con_el_desglose_guardado_muestra_expo_impo_y_mdz(self):
-        parametros = {**self.BASE, "vuelos_desglose": {"EZE": [["Exportación", 25], ["Importación", 24]]}}
+        parametros = {**self.BASE, "vuelos_desglose": {"EZE": [["Expo", 25], ["Impo", 24]], "MDZ": []}}
         linea = self._linea(self._abrir(parametros=parametros))
         self.assertEqual(
             linea,
-            "Datos usados: tipo de cambio $ 1.485,00 · EZE Exportación 25 × 17,5 USD + Importación 24 × 17,5 USD = 857,5 USD"
-            " · MDZ 27 vuelos × 35 USD = 945 USD.",
+            "Datos usados: tipo de cambio $ 1.485,00 · EZE: Vuelos Expo 437,5 USD + Vuelos Impo 420 USD = 857,5 USD"
+            " · MDZ: 945 USD.",
         )
         self.assertNotIn("49", linea)
+
+    def test_la_estacion_cambiada_a_mano_queda_con_la_linea_simple(self):
+        parametros = {**self.BASE, "vuelos_desglose": {"EZE": [["Expo", 25], ["Impo", 24]]}}  # MDZ no figura
+        linea = self._linea(self._abrir(parametros=parametros))
+        self.assertIn("EZE: Vuelos Expo 437,5 USD + Vuelos Impo 420 USD = 857,5 USD", linea)
+        self.assertIn("MDZ 27 vuelos × 35 USD = 945 USD", linea)
 
     def test_una_liquidacion_vieja_sin_desglose_queda_como_siempre(self):
         linea = self._linea(self._abrir(parametros=self.BASE))
         self.assertEqual(linea, "Datos usados: tipo de cambio $ 1.485,00.")
 
     def test_si_el_desglose_no_suma_la_cantidad_guardada_no_se_usa(self):
-        parametros = {**self.BASE, "vuelos_desglose": {"EZE": [["Exportación", 25], ["Importación", 20]]}}
+        parametros = {**self.BASE, "vuelos_desglose": {"EZE": [["Expo", 25], ["Impo", 20]]}}
         linea = self._linea(self._abrir(parametros=parametros))
         self.assertIn("EZE 49 vuelos × 17,5 USD = 857,5 USD", linea)
-        self.assertNotIn("Exportación", linea)
+        self.assertNotIn("Vuelos Expo", linea)

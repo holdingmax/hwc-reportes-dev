@@ -98,7 +98,7 @@ from src.jetsmart_builder import (
     write_jetsmart_liquidacion,
 )
 from src.jetsmart_revision import filas_para_revisar, resumen_por_tipo
-from src.jetsmart_vuelos_ariel import leer_vuelos_ariel, nombre_bloque, nombre_corto_bloque
+from src.jetsmart_vuelos_ariel import leer_vuelos_ariel, nombre_corto_bloque
 from src.loader import load_original
 from src.period_utils import extract_period, period_label, period_slug
 from src.report_builder import (
@@ -744,6 +744,15 @@ def _linea_confirmada(station: str, leido, cantidad: int, usd_por_vuelo: float) 
         st.markdown(chr(10).join(lineas))
         return
     st.markdown(f"{total} {explicacion(cantidad)}")
+
+
+def _detalle_para_cargar_a_mano(leido) -> str:
+    """Texto gris de "Cambiar a mano": de donde sale la cantidad. En EZE, con las palabras de la hoja
+    de Anita; el total de vuelos va aclarado como dato solo para cargar a mano, no como dato suelto."""
+    if not leido.bloques:
+        return leido.origen
+    partes = " + ".join(f"{nombre_corto_bloque(b)} {n}" for b, n in leido.bloques)
+    return f"Del Excel de Ariel: {partes}, sin carga. Total {leido.cantidad} vuelos (solo para cargar a mano)"
 
 
 def _avisos_de_la_hoja(leido) -> None:
@@ -1431,33 +1440,42 @@ def _tabla_excepciones(excepciones: pd.DataFrame, key: str) -> None:
 
 
 def _desglose_vuelos(vuelos_inter: dict[str, int]) -> dict[str, list[list]]:
-    """Desglose por bloque de lo leido del Excel de Ariel ({"EZE": [["Exportación", 25], ["Importación", 24]]}),
-    solo de las estaciones cuya cantidad sigue siendo la leida: si se cambio a mano, no hay desglose."""
+    """Lo leido del Excel de Ariel que sigue valiendo: {"EZE": [["Expo", 25], ["Impo", 24]], "MDZ": []}.
+    Solo estan las estaciones cuya cantidad sigue siendo la leida (si se cambio a mano, no figura);
+    las que no tienen bloques (MDZ) van con la lista vacia: figuran, pero no hay nada que desglosar."""
     leidos = st.session_state.get("js_vuelos_ariel") or {}
     return {
-        station: [[nombre_bloque(b), n] for b, n in leido.bloques]
+        station: [[nombre_corto_bloque(b), n] for b, n in leido.bloques]
         for station, leido in leidos.items()
-        if leido.bloques and vuelos_inter.get(station) == leido.cantidad
+        if leido.cantidad is not None and vuelos_inter.get(station) == leido.cantidad
     }
 
 
 def _cuenta_con_desglose(station: str, bloques: list, usd_por_vuelo: float) -> str:
-    """"EZE Exportación 25 × 17,5 USD + Importación 24 × 17,5 USD = 857,5 USD" (sin el total de vuelos suelto)."""
-    partes = " + ".join(f"{nombre} {n} × {_num_libre(usd_por_vuelo)} USD" for nombre, n in bloques)
-    total = sum(n for _, n in bloques) * usd_por_vuelo
-    return f"{station} {partes} = {_num_libre(total)} USD"
+    """Con las palabras de la hoja de Anita (ahi "vuelos" son dolares), sin el total de vuelos suelto:
+    "EZE: Vuelos Expo 437,5 USD + Vuelos Impo 420 USD = 857,5 USD" / "MDZ: 945 USD"."""
+    partes = " + ".join(f"Vuelos {nombre} {_num_libre(n * usd_por_vuelo)} USD" for nombre, n in bloques)
+    total = _num_libre(sum(n for _, n in bloques) * usd_por_vuelo)
+    return f"{station}: {partes} = {total} USD"
 
 
 def _datos_usados(
     tipo_cambio: float, vuelos_inter: dict[str, int], usd_por_vuelo: dict[str, float], desglose: dict | None = None,
 ) -> str:
-    """Linea chica del detalle. Con desglose, el mismo del paso 3 (Expo + Impo); si no hay, la cuenta simple."""
+    """Linea chica del detalle. Con la lectura del Excel de Ariel vigente, en las palabras de la hoja
+    de Anita (Vuelos Expo + Vuelos Impo = total; MDZ solo el importe); si la cantidad se cambio a mano
+    o no hay desglose, la cuenta simple."""
     desglose = desglose or {}
-    vuelos = " · ".join(
-        _cuenta_con_desglose(e, desglose[e], usd_por_vuelo[e]) if desglose.get(e) and sum(n for _, n in desglose[e]) == n
-        else f"{e} {_cuenta_vuelos(n, usd_por_vuelo[e])}"
-        for e, n in vuelos_inter.items()
-    )
+
+    def una(e: str, n: int) -> str:
+        bloques = desglose.get(e)
+        if bloques is not None and (not bloques or sum(k for _, k in bloques) == n):
+            if bloques:
+                return _cuenta_con_desglose(e, bloques, usd_por_vuelo[e])
+            return f"{e}: {_num_libre(n * usd_por_vuelo[e])} USD"
+        return f"{e} {_cuenta_vuelos(n, usd_por_vuelo[e])}"
+
+    vuelos = " · ".join(una(e, n) for e, n in vuelos_inter.items())
     return f"Datos usados: tipo de cambio $ {_num(tipo_cambio)} · {vuelos}."
 
 
@@ -1765,7 +1783,7 @@ with st.container(key="zona_carga"):
                         ))
                 if confirmado and vuelos_inter[station] == leido.cantidad:
                     with zona_campos:  # el total de vuelos (49) queda como detalle chico, no como dato principal
-                        st.caption(leido.origen)
+                        st.caption(_detalle_para_cargar_a_mano(leido))
                 with resumen_vuelos if confirmado else st.container():
                     if confirmado:
                         _linea_confirmada(station, leido, vuelos_inter[station], usd_por_vuelo[station])

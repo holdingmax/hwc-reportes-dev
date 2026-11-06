@@ -252,8 +252,8 @@ class ResultadoJetSmart(unittest.TestCase):
         self.assertEqual(len(lineas), 1)
         self.assertEqual(
             lineas[0],
-            "Datos usados: tipo de cambio $ 1.485,00 · EZE Exportación 25 × 17,5 USD + Importación 24 × 17,5 USD = 857,5 USD"
-            " · MDZ 27 vuelos × 35 USD = 945 USD.",
+            "Datos usados: tipo de cambio $ 1.485,00 · EZE: Vuelos Expo 437,5 USD + Vuelos Impo 420 USD = 857,5 USD"
+            " · MDZ: 945 USD.",
         )
         self.assertNotIn("49", lineas[0])
 
@@ -261,20 +261,22 @@ class ResultadoJetSmart(unittest.TestCase):
         at = self._procesar(vuelos=(48, 27))
         linea = next(c.value for c in at.caption if c.value.startswith("Datos usados:"))
         self.assertIn("EZE 48 vuelos × 17,5 USD = 840 USD", linea)
-        self.assertNotIn("Exportación", linea)
-        self.assertIn("MDZ 27 vuelos × 35 USD = 945 USD", linea)  # MDZ no se toco
+        self.assertNotIn("Vuelos Expo", linea)
+        self.assertIn("MDZ: 945 USD", linea)  # MDZ no se toco: va con las palabras de la hoja
 
     def test_el_desglose_se_guarda_en_los_parametros_para_el_historial(self):
         at = self._procesar()
         guardar = src_db.guardar_liquidacion_jetsmart
         parametros = guardar.call_args.kwargs["parametros"]
-        self.assertEqual(parametros["vuelos_desglose"], {"EZE": [["Exportación", 25], ["Importación", 24]]})
+        self.assertEqual(parametros["vuelos_desglose"], {"EZE": [["Expo", 25], ["Impo", 24]], "MDZ": []})
         self.assertEqual(parametros["vuelos_inter"], {"EZE": 49, "MDZ": 27})  # los datos del calculo no cambian
         self.assertEqual(len(at.exception), 0)
 
     def test_si_se_cambio_a_mano_no_se_guarda_el_desglose_de_esa_estacion(self):
         self._procesar(vuelos=(48, 27))
-        self.assertNotIn("vuelos_desglose", src_db.guardar_liquidacion_jetsmart.call_args.kwargs["parametros"])
+        desglose = src_db.guardar_liquidacion_jetsmart.call_args.kwargs["parametros"]["vuelos_desglose"]
+        self.assertNotIn("EZE", desglose)
+        self.assertEqual(desglose, {"MDZ": []})  # MDZ no se toco
 
     def test_los_avisos_importantes_siguen_a_la_vista(self):
         at = self._procesar()

@@ -134,7 +134,7 @@ class VuelosDesdeElExcelDeAriel(unittest.TestCase):
         self.assertEqual(self.at.number_input(key="js_vuelos_EZE").value, 49)
         self.assertEqual(self.at.number_input(key="js_vuelos_MDZ").value, 27)
         textos = _textos(self.at)
-        self.assertIn("Tomado del Excel de Ariel, hoja mani mane EZE: 25 + 24 vuelos sin carga = 49", textos)
+        self.assertIn("Del Excel de Ariel: Expo 25 + Impo 24, sin carga. Total 49 vuelos (solo para cargar a mano)", textos)
         self.assertIn("Tomado del Excel de Ariel, hoja mani mane MDZ: 27 vuelos con USD", textos)
         self.assertIn("- **Total EZE: 857,5 USD**", textos)
         self.assertEqual(len(self.at.exception), 0)
@@ -145,7 +145,7 @@ class VuelosDesdeElExcelDeAriel(unittest.TestCase):
         self.assertEqual(self.at.number_input(key="js_vuelos_EZE").value, 48)
         textos = _textos(self.at)
         self.assertIn("Cambiaste la cantidad a mano: el Excel de Ariel (hoja mani mane EZE) tenía 49", textos)
-        self.assertNotIn("Tomado del Excel de Ariel, hoja mani mane EZE", textos)
+        self.assertNotIn("Del Excel de Ariel: Expo", textos)  # ya no es la cantidad leida
         self.at.run()  # otra interaccion cualquiera: sigue en 48
         self.assertEqual(self.at.number_input(key="js_vuelos_EZE").value, 48)
 
@@ -290,7 +290,7 @@ class DesgloseDeEzeComoLaHojaDeAnita(unittest.TestCase):
 
     def test_el_49_solo_aparece_como_detalle_chico_dentro_de_cambiar_a_mano(self):
         _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
-        detalle = "Tomado del Excel de Ariel, hoja mani mane EZE: 25 + 24 vuelos sin carga = 49"
+        detalle = "Del Excel de Ariel: Expo 25 + Impo 24, sin carga. Total 49 vuelos (solo para cargar a mano)"
         eze = next(e for e in self.at.get("expander") if e.label == "Cambiar a mano")
         self.assertEqual([c.value for c in eze.caption], [detalle])
         dentro = {c.value for e in self.at.get("expander") for c in e.caption}
