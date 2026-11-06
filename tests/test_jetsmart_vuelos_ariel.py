@@ -226,6 +226,34 @@ class ManeRepetidoEze(unittest.TestCase):
         self.assertEqual(eze.avisos_repetidos, ())
 
 
+class CeldasDeLosImportesPorBloque(unittest.TestCase):
+    """Las celdas "Vuelos Expo" / "Vuelos Impo" de la hoja de Anita, para citarlas en pantalla."""
+
+    def _hoja(self, rotulos):
+        filas = _eze_con_filas([("A1", "100 A", 0)], [("B1", "200 A", 0)])
+        return filas[:-2] + [[], *rotulos, [], [None, 52.5]]
+
+    def test_ubica_expo_e_impo_por_su_rotulo(self):
+        filas = self._hoja([["Vuelos Expo", 17.5], ["Vuelos Impo", 17.5]])
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": filas}))["EZE"]
+        self.assertEqual(eze.celdas_bloques, (("EXPO", "B7"), ("IMPO", "B8")))
+
+    def test_si_un_bloque_no_se_ubica_solo_falta_ese(self):
+        filas = self._hoja([["Vuelos Expo", 17.5], ["Otra cosa", 3]])
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": filas}))["EZE"]
+        self.assertEqual(eze.celdas_bloques, (("EXPO", "B7"),))
+        self.assertEqual(eze.cantidad, 2)  # no afecta la lectura
+
+    def test_rotulo_repetido_no_se_adivina(self):
+        filas = self._hoja([["Vuelos Expo", 17.5], ["Vuelos Expo", 20], ["Vuelos Impo", 17.5]])
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": filas}))["EZE"]
+        self.assertEqual(eze.celdas_bloques, (("IMPO", "B9"),))
+
+    @unittest.skipUnless(ARIEL_OCT.exists(), "falta el Ariel de octubre")
+    def test_octubre_expo_b39_e_impo_b40(self):
+        self.assertEqual(leer_vuelos_ariel(ARIEL_OCT)["EZE"].celdas_bloques, (("EXPO", "B39"), ("IMPO", "B40")))
+
+
 @unittest.skipUnless(ARIEL_OCT.exists(), "falta el Ariel de octubre")
 class ControlesConArchivosReales(unittest.TestCase):
     def test_octubre_desglose_celdas_y_mane_repetido(self):

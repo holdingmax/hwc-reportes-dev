@@ -51,6 +51,7 @@ class VuelosEstacion:
     celda_total: str | None = None  # donde esta el total en USD de la hoja ("B42", "G30")
     avisos_conteo: tuple[str, ...] = ()  # las filas de vuelo contadas no coinciden con los totales tipeados
     avisos_repetidos: tuple[str, ...] = ()  # mismo numero de mane en dos filas (puede ser un vuelo repetido)
+    celdas_bloques: tuple[tuple[str, str], ...] = ()  # EZE: (("EXPO", "B39"), ("IMPO", "B40")) importe de cada bloque
 
 
 def _norm(valor: object) -> str:
@@ -116,6 +117,11 @@ _NOMBRE_BLOQUE = {"EXPO": "Exportación", "IMPO": "Importación"}
 def nombre_bloque(bloque: str) -> str:
     """"EXPO" -> "Exportación", "IMPO" -> "Importación" (como en la hoja de Anita)."""
     return _NOMBRE_BLOQUE.get(bloque, bloque.capitalize())
+
+
+def nombre_corto_bloque(bloque: str) -> str:
+    """"EXPO" -> "Expo", "IMPO" -> "Impo": como rotula la hoja de Anita ("Vuelos Expo")."""
+    return bloque.capitalize()
 
 
 def _leer_eze(grilla: list[list]) -> tuple[list[tuple[str, int]] | None, float | None, str | None]:
@@ -185,6 +191,27 @@ def _total_usd_eze(grilla: list[list], desde: int) -> tuple[float | None, str | 
         if len(celdas) == 1 and _numero(celdas[0][1]) is not None:
             sueltos.append((_numero(celdas[0][1]), _celda(i, celdas[0][0])))
     return sueltos[0] if len(sueltos) == 1 else (None, None)
+
+
+def _celdas_importes_bloques(grilla: list[list], bloques: list[tuple[str, int]]) -> tuple[tuple[str, str], ...]:
+    """Celda con el importe en USD de cada bloque ("Vuelos Expo" -> B39), buscada por su rotulo
+    al pie de la hoja. Si un bloque no se ubica con claridad, simplemente no figura."""
+    desde = max((i for i, _ in _buscar(grilla, lambda t: t == "sin carga")), default=0)
+    encontradas = []
+    for bloque, _ in bloques:
+        rotulos = (f"vuelos {bloque.casefold()}", bloque.casefold())
+        candidatas = []
+        for i in range(desde + 1, len(grilla)):
+            for j, v in enumerate(grilla[i]):
+                if v is not None and _norm(v) in rotulos:
+                    for k in range(j + 1, len(grilla[i])):
+                        if not _vacia(grilla[i][k]):
+                            if _numero(grilla[i][k]) is not None:
+                                candidatas.append(_celda(i, k))
+                            break
+        if len(candidatas) == 1:
+            encontradas.append((bloque, candidatas[0]))
+    return tuple(encontradas)
 
 
 def _controles_eze(grilla: list[list], controles: list, hoja: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -275,7 +302,7 @@ def leer_vuelos_ariel(source) -> dict[str, VuelosEstacion]:
                     f"Hay más de una hoja de manifiestos de {estacion}: " + ", ".join(h.strip() for h in hojas) + ".",
                 )
                 continue
-            bloques, celda_total, conteo, repetidos = (), None, (), ()
+            bloques, celda_total, conteo, repetidos, celdas_bloques = (), None, (), (), ()
             try:
                 grilla = _grilla(wb[hojas[0]])
                 if estacion == "EZE":
@@ -284,6 +311,7 @@ def leer_vuelos_ariel(source) -> dict[str, VuelosEstacion]:
                     origen = None
                     if cantidad is not None:
                         bloques = tuple(leidos)
+                        celdas_bloques = _celdas_importes_bloques(grilla, leidos)
                         partes = " + ".join(str(n) for _, n in leidos)
                         origen = f"Tomado del Excel de Ariel, hoja {nombre}: {partes} vuelos sin carga = {cantidad}"
                         try:
@@ -297,13 +325,13 @@ def leer_vuelos_ariel(source) -> dict[str, VuelosEstacion]:
                         origen = f"Tomado del Excel de Ariel, hoja {nombre}: {cantidad} vuelos con USD"
             except Exception:
                 cantidad, total_usd, origen = None, None, None
-                bloques, celda_total, conteo, repetidos = (), None, (), ()
+                bloques, celda_total, conteo, repetidos, celdas_bloques = (), None, (), (), ()
                 problema = "No pude leer la hoja."
             if total_usd is not None:
                 total_usd = _a_numero_mostrable(total_usd)
             resultado[estacion] = VuelosEstacion(
                 estacion, nombre, cantidad, origen, total_usd, problema,
-                bloques, celda_total if total_usd is not None else None, conteo, repetidos,
+                bloques, celda_total if total_usd is not None else None, conteo, repetidos, celdas_bloques,
             )
     finally:
         wb.close()

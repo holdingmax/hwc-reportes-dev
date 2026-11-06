@@ -67,7 +67,7 @@ class VuelosInternacionales(unittest.TestCase):
         self._env.stop()
 
     def test_cuatro_campos_con_titulos_claros_y_defaults(self):
-        self.assertEqual(self.at.number_input(key="js_vuelos_EZE").label, "Cantidad de vuelos")
+        self.assertEqual(self.at.number_input(key="js_vuelos_EZE").label, "Cantidad de vuelos (no el importe)")
         self.assertEqual(self.at.number_input(key="js_usd_EZE").label, "USD por vuelo")
         self.assertEqual(self.at.number_input(key="js_usd_EZE").value, 17.5)
         self.assertEqual(self.at.number_input(key="js_usd_MDZ").value, 35.0)
@@ -172,7 +172,7 @@ class VuelosDesdeElExcelDeAriel(unittest.TestCase):
     def test_control_coincide_con_el_total_del_excel(self):
         _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
         textos = _textos(self.at)
-        self.assertEqual(textos.count("✔ igual al total amarillo de tu hoja"), 2)  # EZE 857,5 y MDZ 945
+        self.assertEqual(textos.count("✔ igual al total amarillo"), 2)  # EZE 857,5 y MDZ 945
         self.assertEqual(_avisos_control(self.at), [])
 
     def test_control_que_no_coincide_avisa_con_los_dos_valores_y_no_bloquea(self):
@@ -184,7 +184,7 @@ class VuelosDesdeElExcelDeAriel(unittest.TestCase):
         self.assertIn("857,5 USD", avisos[0])
         self.assertIn("No coincide con el total del Excel de Ariel", avisos[0])
         # El otro total sigue coincidiendo, y no se toco ningun valor.
-        self.assertEqual(_textos(self.at).count("✔ igual al total amarillo de tu hoja"), 1)
+        self.assertEqual(_textos(self.at).count("✔ igual al total amarillo"), 1)
         self.assertEqual(self.at.number_input(key="js_vuelos_EZE").value, 49)
         self.assertEqual(len(self.at.exception), 0)
 
@@ -198,7 +198,7 @@ class VuelosDesdeElExcelDeAriel(unittest.TestCase):
 
     def test_sin_total_en_el_excel_no_hay_control(self):
         _subir(self.at, (ARIEL_SEP.name, ARIEL_SEP.read_bytes()))  # EZE sin total en USD; MDZ 33 x 35 = 1155
-        self.assertEqual(_textos(self.at).count("✔ igual al total amarillo de tu hoja"), 1)
+        self.assertEqual(_textos(self.at).count("✔ igual al total amarillo"), 1)
         self.assertEqual(_avisos_control(self.at), [])
 
     def test_sin_excel_de_ariel_no_hay_control(self):
@@ -227,10 +227,10 @@ class CantidadConfirmadaDesdeAriel(unittest.TestCase):
     def test_muestra_la_cuenta_como_dato_confirmado(self):
         _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
         textos = _textos(self.at)
-        self.assertIn("- Exportación: 25 vuelos sin carga × 17,5 USD = 437,5 USD", textos)
-        self.assertIn("- Importación: 24 vuelos sin carga × 17,5 USD = 420 USD", textos)
-        self.assertIn("- **Total EZE: 857,5 USD** ✔ igual al total amarillo de tu hoja (celda B42)", textos)
-        self.assertIn("MDZ: 27 vuelos × 35 USD = 945 USD** ✔ igual al total amarillo de tu hoja (celda G30)", textos)
+        self.assertIn("- **Vuelos Expo: 437,5 USD** (tu celda B39) :small[= 25 vuelos sin carga × 17,5]", textos)
+        self.assertIn("- **Vuelos Impo: 420 USD** (tu celda B40) :small[= 24 vuelos sin carga × 17,5]", textos)
+        self.assertIn("- **Total EZE: 857,5 USD** ✔ igual al total amarillo (tu celda B42)", textos)
+        self.assertIn("**Total MDZ: 945 USD** ✔ igual al total amarillo (tu celda G30) :small[= 27 vuelos × 35]", textos)
         self.assertNotIn("EZE: 49", textos)  # el 49 no existe en la hoja de Anita: no va como dato principal
 
     def test_los_campos_editables_quedan_en_un_expander_cerrado(self):
@@ -239,20 +239,20 @@ class CantidadConfirmadaDesdeAriel(unittest.TestCase):
         self.assertEqual(len(expanders), 2)
         for e in expanders:
             self.assertFalse(e.proto.expanded)
-            self.assertEqual([n.label for n in e.number_input], ["Cantidad de vuelos", "USD por vuelo"])
+            self.assertEqual([n.label for n in e.number_input], ["Cantidad de vuelos (no el importe)", "USD por vuelo"])
 
     def test_se_puede_cambiar_a_mano_y_la_cuenta_lo_sigue(self):
         _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
         self.at.number_input(key="js_vuelos_EZE").set_value(48).run()
         textos = _textos(self.at)
-        self.assertIn("EZE: 48 vuelos × 17,5 USD = 840 USD**", textos)
-        self.assertNotIn("EZE: 48 vuelos × 17,5 USD = 840 USD** ✔", textos)  # ya no coincide con Ariel
+        self.assertIn("**Total EZE: 840 USD** :small[= 48 vuelos × 17,5]", textos)
+        self.assertNotIn("**Total EZE: 840 USD** ✔", textos)  # ya no coincide con Ariel
 
     def test_sin_cantidad_de_ariel_los_campos_siguen_a_la_vista(self):
         _subir(self.at, (GUIAS_OCT.name, GUIAS_OCT.read_bytes()))
         self.assertEqual(_expanders_a_mano(self.at), [])
         self.assertNotIn("✔", _textos(self.at))
-        self.assertEqual(self.at.number_input(key="js_vuelos_EZE").label, "Cantidad de vuelos")
+        self.assertEqual(self.at.number_input(key="js_vuelos_EZE").label, "Cantidad de vuelos (no el importe)")
 
 
 def _ariel_con_total_expo_tipeado(total: int) -> bytes:
@@ -283,9 +283,9 @@ class DesgloseDeEzeComoLaHojaDeAnita(unittest.TestCase):
         bloque = next(m.value for m in self.at.markdown if m.value.startswith("**EZE**"))
         self.assertEqual(bloque.splitlines(), [
             "**EZE**",
-            "- Exportación: 25 vuelos sin carga × 17,5 USD = 437,5 USD",
-            "- Importación: 24 vuelos sin carga × 17,5 USD = 420 USD",
-            "- **Total EZE: 857,5 USD** ✔ igual al total amarillo de tu hoja (celda B42)",
+            "- **Vuelos Expo: 437,5 USD** (tu celda B39) :small[= 25 vuelos sin carga × 17,5]",
+            "- **Vuelos Impo: 420 USD** (tu celda B40) :small[= 24 vuelos sin carga × 17,5]",
+            "- **Total EZE: 857,5 USD** ✔ igual al total amarillo (tu celda B42)",
         ])
 
     def test_el_49_solo_aparece_como_detalle_chico_dentro_de_cambiar_a_mano(self):
@@ -302,13 +302,34 @@ class DesgloseDeEzeComoLaHojaDeAnita(unittest.TestCase):
         bloque = next(m.value for m in self.at.markdown if m.value.startswith("**EZE**"))
         self.assertIn("- **Total EZE: 280 USD**", bloque)
         self.assertNotIn("✔", bloque)
-        self.assertIn("(celda G36)", _textos(self.at))  # el de MDZ si
+        self.assertIn("(tu celda G36)", _textos(self.at))  # el de MDZ si
+
+    def test_el_importe_va_primero_en_negrita_y_la_cuenta_despues_como_explicacion(self):
+        _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
+        for linea in (m.value for m in self.at.markdown if m.value.startswith("**EZE**")):
+            for renglon in linea.splitlines()[1:]:
+                self.assertTrue(renglon.startswith("- **"), renglon)  # el importe en USD abre la linea
+                if renglon.startswith("- **Vuelos"):  # el total de EZE no lleva explicacion
+                    self.assertRegex(renglon, r"USD\*\*.* :small\[= ")  # la cuenta cierra, chica
+
+    def test_si_falta_una_celda_se_omite_solo_esa_referencia(self):
+        # Septiembre: la hoja de EZE no trae las celdas de Expo/Impo ni el total.
+        _subir(self.at, (ARIEL_SEP.name, ARIEL_SEP.read_bytes()))
+        bloque = next(m.value for m in self.at.markdown if m.value.startswith("**EZE**"))
+        self.assertIn("- **Vuelos Expo: 157,5 USD** :small[= 9 vuelos sin carga × 17,5]", bloque)
+        self.assertIn("- **Vuelos Impo: 122,5 USD** :small[= 7 vuelos sin carga × 17,5]", bloque)
+        self.assertNotIn("tu celda", bloque)
+
+    def test_mdz_editado_a_mano_pierde_el_check_y_la_celda(self):
+        _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
+        self.at.number_input(key="js_vuelos_MDZ").set_value(26).run()
+        self.assertIn("**Total MDZ: 910 USD** :small[= 26 vuelos × 35]", _textos(self.at))
 
     def test_si_cambia_la_cantidad_a_mano_vuelve_a_la_cuenta_simple(self):
         _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
         self.at.number_input(key="js_vuelos_EZE").set_value(48).run()
         self.assertFalse(any(m.value.startswith("**EZE**" + chr(10)) for m in self.at.markdown))
-        self.assertIn("**EZE: 48 vuelos × 17,5 USD = 840 USD**", _textos(self.at))
+        self.assertIn("**Total EZE: 840 USD** :small[= 48 vuelos × 17,5]", _textos(self.at))
 
     def test_aviso_suave_por_el_mane_repetido_de_octubre(self):
         _subir(self.at, (ARIEL_OCT.name, ARIEL_OCT.read_bytes()))
@@ -375,7 +396,7 @@ class AvisoDeImporteConBoton(unittest.TestCase):
         self.assertEqual(self.at.number_input(key="js_vuelos_EZE").value, 49)
         self.assertEqual(self._avisos_importe(), [])
         self.assertEqual(len([b for b in self.at.button if b.label.startswith("Usar")]), 0)
-        self.assertIn("- **Total EZE: 857,5 USD** ✔ igual al total amarillo de tu hoja (celda B42)", _textos(self.at))
+        self.assertIn("- **Total EZE: 857,5 USD** ✔ igual al total amarillo (tu celda B42)", _textos(self.at))
         self.assertEqual(len(self.at.exception), 0)
 
     def test_es_por_estacion(self):

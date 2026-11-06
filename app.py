@@ -98,7 +98,7 @@ from src.jetsmart_builder import (
     write_jetsmart_liquidacion,
 )
 from src.jetsmart_revision import filas_para_revisar, resumen_por_tipo
-from src.jetsmart_vuelos_ariel import leer_vuelos_ariel, nombre_bloque
+from src.jetsmart_vuelos_ariel import leer_vuelos_ariel, nombre_bloque, nombre_corto_bloque
 from src.loader import load_original
 from src.period_utils import extract_period, period_label, period_slug
 from src.report_builder import (
@@ -712,25 +712,38 @@ def _coincide_con_total(leido, cantidad: int, usd_por_vuelo: float) -> bool:
 
 
 def _linea_confirmada(station: str, leido, cantidad: int, usd_por_vuelo: float) -> None:
-    """Cantidad leida del Excel de Ariel, mostrada como dato confirmado (no como
-    campo a completar), con las cuentas de la hoja de Anita:
+    """Cantidad leida del Excel de Ariel, mostrada como dato confirmado (no como campo a
+    completar), con las palabras de la hoja de Anita: primero el importe en USD (negrita) y la
+    cuenta "vuelos × USD" despues, como explicacion chica.
 
-        MDZ: 27 vuelos × 35 USD = 945 USD ✔ igual al total amarillo de tu hoja (celda G30)
+        **Total MDZ: 945 USD** ✔ igual al total amarillo (tu celda G30) = 27 vuelos × 35
 
-    EZE (mientras la cantidad sea la leida) va con el desglose de su hoja, sin el
-    total de vuelos suelto: una linea de Exportacion, una de Importacion y el total."""
+    EZE (mientras la cantidad sea la leida) va con el desglose de su hoja: Vuelos Expo, Vuelos Impo
+    y el total. Cada referencia a una celda se omite si no se pudo ubicar."""
+    usd = _num_libre(usd_por_vuelo)
+
+    def explicacion(vuelos: int, detalle: str = "") -> str:
+        unidad = "vuelo" if vuelos == 1 else "vuelos"
+        return f":small[= {vuelos} {unidad}{detalle} × {usd}]"
+
     if _coincide_con_total(leido, cantidad, usd_por_vuelo):
-        ok = " ✔ igual al total amarillo de tu hoja" + (f" (celda {leido.celda_total})" if leido.celda_total else "")
+        ok = " ✔ igual al total amarillo" + (f" (tu celda {leido.celda_total})" if leido.celda_total else "")
     else:
         ok = ""
+    total = f"**Total {station}: {_num_libre(cantidad * usd_por_vuelo)} USD**{ok}"
     if leido is not None and leido.bloques and cantidad == leido.cantidad:
+        celdas = dict(leido.celdas_bloques)
         lineas = [f"**{station}**"]
         for bloque, sin_carga in leido.bloques:
-            lineas.append(f"- {nombre_bloque(bloque)}: {_cuenta_vuelos(sin_carga, usd_por_vuelo, ' sin carga')}")
-        lineas.append(f"- **Total {station}: {_num_libre(cantidad * usd_por_vuelo)} USD**{ok}")
-        st.markdown("\n".join(lineas))
+            celda = f" (tu celda {celdas[bloque]})" if bloque in celdas else ""
+            lineas.append(
+                f"- **Vuelos {nombre_corto_bloque(bloque)}: {_num_libre(sin_carga * usd_por_vuelo)} USD**{celda} "
+                + explicacion(sin_carga, " sin carga")
+            )
+        lineas.append(f"- {total}")
+        st.markdown(chr(10).join(lineas))
         return
-    st.markdown(f"**{station}: {_cuenta_vuelos(cantidad, usd_por_vuelo)}**{ok}")
+    st.markdown(f"{total} {explicacion(cantidad)}")
 
 
 def _avisos_de_la_hoja(leido) -> None:
@@ -1743,7 +1756,7 @@ with st.container(key="zona_carga"):
                     with col_cant:
                         # Entera: no hay medio vuelo.
                         vuelos_inter[station] = int(st.number_input(
-                            "Cantidad de vuelos", min_value=0, step=1, key=f"js_vuelos_{station}",
+                            "Cantidad de vuelos (no el importe)", min_value=0, step=1, key=f"js_vuelos_{station}",
                         ))
                     with col_usd:
                         usd_por_vuelo[station] = float(st.number_input(
