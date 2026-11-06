@@ -98,7 +98,7 @@ from src.jetsmart_builder import (
     write_jetsmart_liquidacion,
 )
 from src.jetsmart_revision import filas_para_revisar, resumen_por_tipo
-from src.jetsmart_vuelos_ariel import leer_vuelos_ariel
+from src.jetsmart_vuelos_ariel import leer_vuelos_ariel, nombre_bloque
 from src.loader import load_original
 from src.period_utils import extract_period, period_label, period_slug
 from src.report_builder import (
@@ -664,10 +664,11 @@ def _num_libre(value: float) -> str:
     return texto.rstrip("0").rstrip(",") if "," in texto else texto
 
 
-def _cuenta_vuelos(vuelos: int, usd_por_vuelo: float) -> str:
-    """La cuenta de una estacion, en vivo: "49 vuelos × 17,5 USD = 857,5 USD"."""
+def _cuenta_vuelos(vuelos: int, usd_por_vuelo: float, detalle: str = "") -> str:
+    """La cuenta de una estacion, en vivo: "49 vuelos × 17,5 USD = 857,5 USD".
+    `detalle` va despues de la palabra vuelos: " sin carga"."""
     unidad = "vuelo" if vuelos == 1 else "vuelos"
-    return f"{vuelos} {unidad} × {_num_libre(usd_por_vuelo)} USD = {_num_libre(vuelos * usd_por_vuelo)} USD"
+    return f"{vuelos} {unidad}{detalle} × {_num_libre(usd_por_vuelo)} USD = {_num_libre(vuelos * usd_por_vuelo)} USD"
 
 
 def _vuelos_del_ariel(archivo) -> dict:
@@ -685,8 +686,9 @@ def _vuelos_del_ariel(archivo) -> dict:
     return st.session_state["js_vuelos_ariel"]
 
 
-def _origen_vuelos(leido, cantidad: int) -> None:
-    """De donde salio la cantidad de una estacion (si salio del Excel de Ariel)."""
+def _origen_vuelos(leido, cantidad: int, *, mostrar_origen: bool = True) -> None:
+    """De donde salio la cantidad de una estacion (si salio del Excel de Ariel).
+    mostrar_origen=False: cuando es justo la leida no lo repite (queda como detalle en "Cambiar a mano")."""
     if leido is None:
         return
     if leido.cantidad is None:
@@ -696,7 +698,8 @@ def _origen_vuelos(leido, cantidad: int) -> None:
             icon=":material/warning:",
         )
     elif cantidad == leido.cantidad:
-        st.caption(f":material/description: {leido.origen}")
+        if mostrar_origen:
+            st.caption(f":material/description: {leido.origen}")
     else:
         st.caption(
             f":material/edit: Cambiaste la cantidad a mano: el Excel de Ariel (hoja {leido.hoja}) tenía {leido.cantidad}."
@@ -710,9 +713,35 @@ def _coincide_con_total(leido, cantidad: int, usd_por_vuelo: float) -> bool:
 
 def _linea_confirmada(station: str, leido, cantidad: int, usd_por_vuelo: float) -> None:
     """Cantidad leida del Excel de Ariel, mostrada como dato confirmado (no como
-    campo a completar): "EZE: 49 vuelos × 17,5 USD = 857,5 USD ✔ coincide con el Excel de Ariel"."""
-    ok = " ✔ coincide con el Excel de Ariel" if _coincide_con_total(leido, cantidad, usd_por_vuelo) else ""
+    campo a completar), con las cuentas de la hoja de Anita:
+
+        MDZ: 27 vuelos × 35 USD = 945 USD ✔ igual al total amarillo de tu hoja (celda G30)
+
+    EZE (mientras la cantidad sea la leida) va con el desglose de su hoja, sin el
+    total de vuelos suelto: una linea de Exportacion, una de Importacion y el total."""
+    if _coincide_con_total(leido, cantidad, usd_por_vuelo):
+        ok = " ✔ igual al total amarillo de tu hoja" + (f" (celda {leido.celda_total})" if leido.celda_total else "")
+    else:
+        ok = ""
+    if leido is not None and leido.bloques and cantidad == leido.cantidad:
+        lineas = [f"**{station}**"]
+        for bloque, sin_carga in leido.bloques:
+            lineas.append(f"- {nombre_bloque(bloque)}: {_cuenta_vuelos(sin_carga, usd_por_vuelo, ' sin carga')}")
+        lineas.append(f"- **Total {station}: {_num_libre(cantidad * usd_por_vuelo)} USD**{ok}")
+        st.markdown("\n".join(lineas))
+        return
     st.markdown(f"**{station}: {_cuenta_vuelos(cantidad, usd_por_vuelo)}**{ok}")
+
+
+def _avisos_de_la_hoja(leido) -> None:
+    """Avisos de la lectura de la hoja de EZE: el conteo de filas contra los totales
+    tipeados (fuerte) y un mane repetido (suave). Solo avisan."""
+    if leido is None:
+        return
+    for texto in leido.avisos_conteo:
+        st.warning(texto, icon=":material/warning:")
+    for texto in leido.avisos_repetidos:
+        st.info(texto, icon=":material/info:")
 
 
 def _control_total_vuelos(leido, cantidad: int, usd_por_vuelo: float, *, mostrar_ok: bool = True) -> None:
@@ -1673,14 +1702,18 @@ with st.container(key="zona_carga"):
                             "USD por vuelo", min_value=0.0, value=float(usd_default), step=0.5, format="%.2f",
                             key=f"js_usd_{station}",
                         ))
+                if confirmado and vuelos_inter[station] == leido.cantidad:
+                    with zona_campos:  # el total de vuelos (49) queda como detalle chico, no como dato principal
+                        st.caption(leido.origen)
                 with resumen_vuelos if confirmado else st.container():
                     if confirmado:
                         _linea_confirmada(station, leido, vuelos_inter[station], usd_por_vuelo[station])
-                    _origen_vuelos(leido, vuelos_inter[station])
+                    _origen_vuelos(leido, vuelos_inter[station], mostrar_origen=not confirmado)
                     if not confirmado:
                         st.caption(_cuenta_vuelos(vuelos_inter[station], usd_por_vuelo[station]))
                     _control_total_vuelos(leido, vuelos_inter[station], usd_por_vuelo[station], mostrar_ok=not confirmado)
                     _aviso_importe(station, leido, vuelos_inter[station])
+                    _avisos_de_la_hoja(leido)
 
     if es_jetsmart_sel:
         requisitos = _requisitos_jetsmart(conjunto, bool(fuentes), tipo_cambio)
