@@ -43,8 +43,11 @@ def _lectura_version(version: int):
 
 
 def _es_detalle(bloque) -> bool:
-    """Los expanders del detalle (en este AppTest salen como bloques con rotulo)."""
-    return getattr(bloque, "label", None) is not None and hasattr(getattr(bloque, "proto", None), "expanded")
+    """Los expanders del detalle (en este AppTest salen como bloques con rotulo).
+
+    "Cambiar a mano" es del paso 3 (datos del periodo), no del detalle del resultado."""
+    rotulo = getattr(bloque, "label", None)
+    return rotulo is not None and rotulo != "Cambiar a mano" and hasattr(getattr(bloque, "proto", None), "expanded")
 
 
 def _detalles(at) -> list:
