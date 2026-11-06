@@ -140,5 +140,110 @@ class SinCertezaNoCompleta(unittest.TestCase):
         self.assertIn("más de una hoja", v["EZE"].problema)
 
 
+def _eze_con_filas(expo: list, impo: list, tot_expo=None, tot_impo=None) -> list[list]:
+    """Hoja de EZE con filas de vuelo reales. expo/impo: [(vuelo, mane, guias)]. Los totales tipeados
+    salen de las filas (guias > 0 = con carga) salvo que se pasen (total, con_carga) a mano."""
+    def totales(filas):
+        con = sum(1 for _, _, g in filas if g)
+        return len(filas), con, len(filas) - con
+    te, ti = tot_expo or totales(expo)[:2], tot_impo or totales(impo)[:2]
+    filas = [["Fecha", "Vuelo", "Mane", "Guias", "Destino", "Vuelo", "Mani", "Guias", "Origen"]]
+    for k in range(max(len(expo), len(impo))):
+        e = expo[k] if k < len(expo) else (None, None, None)
+        i = impo[k] if k < len(impo) else (None, None, None)
+        filas.append([None, e[0], e[1], e[2], None, i[0], i[1], i[2], None])
+    filas += [[None, "TOTAL VUELOS EXPO", None, te[0], None, "TOTAL VUELOS IMPO", None, ti[0]]]
+    filas += [[None, "CON CARGA", None, te[1], None, "CON CARGA", None, ti[1]]]
+    filas += [[None, "SIN CARGA", None, te[0] - te[1], None, "SIN CARGA", None, ti[0] - ti[1]]]
+    filas += [[], [None, 52.5]]
+    return filas
+
+
+class DesgloseYCeldaDelTotal(unittest.TestCase):
+    def test_eze_devuelve_el_desglose_y_la_celda_del_total(self):
+        filas = _eze_con_filas([("A1", "100 A", 0), ("A2", "101 B", 0)], [("B1", "200 C", 0)])
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": filas}))["EZE"]
+        self.assertEqual(eze.bloques, (("EXPO", 2), ("IMPO", 1)))
+        self.assertEqual(eze.celda_total, "B8")  # encabezado + 2 filas + 3 de totales + vacia = 7; el total es la fila 8
+
+    def test_mdz_devuelve_la_celda_del_total(self):
+        filas = [["FECHA", "VUELO", "USD"], ["1/10", "JA1", 35], ["2/10", "JA2", 35], [None, None, 70]]
+        mdz = leer_vuelos_ariel(_libro({"mani mane MDZ": filas}))["MDZ"]
+        self.assertEqual((mdz.total_usd, mdz.celda_total), (70, "C4"))
+        self.assertEqual(mdz.bloques, ())
+
+    def test_sin_total_no_hay_celda(self):
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": _eze(total=None)}))["EZE"]
+        self.assertIsNone(eze.celda_total)
+
+
+class ControlDeConteoEze(unittest.TestCase):
+    """Se cuentan las filas de vuelo de Expo e Impo y se comparan con los totales tipeados."""
+
+    def test_si_coinciden_no_avisa(self):
+        filas = _eze_con_filas([("A1", "100 A", 0)] * 2 + [("A3", "102 C", 0)], [("B1", "200 A", 1), ("B2", "201 B", 0)])
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": filas}))["EZE"]
+        self.assertEqual(eze.avisos_conteo, ())
+
+    def test_si_hay_mas_filas_que_el_total_tipeado_avisa_con_los_dos_numeros(self):
+        filas = _eze_con_filas([("A1", "100 A", 0), ("A2", "101 B", 0), ("A3", "102 C", 0)], [("B1", "200 A", 0)],
+                               tot_expo=(2, 0))
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": filas}))["EZE"]
+        self.assertEqual(eze.cantidad, 3)  # el aviso no cambia la cantidad
+        self.assertEqual(len(eze.avisos_conteo), 1)
+        self.assertIn("Exportación", eze.avisos_conteo[0])
+        self.assertIn("conté 3 filas de vuelo", eze.avisos_conteo[0])
+        self.assertIn("dicen 2 vuelos", eze.avisos_conteo[0])
+
+    def test_si_las_con_carga_no_coinciden_avisa(self):
+        filas = _eze_con_filas([("A1", "100 A", 0)], [("B1", "200 A", 1), ("B2", "201 B", 0)], tot_impo=(2, 0))
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": filas}))["EZE"]
+        self.assertEqual(len(eze.avisos_conteo), 1)
+        self.assertIn("Importación", eze.avisos_conteo[0])
+        self.assertIn("1 con carga", eze.avisos_conteo[0])
+
+    def test_las_filas_sin_vuelos_no_se_cuentan(self):
+        filas = _eze_con_filas([("A1", "100 A", 0), ("SIN VUELOS", None, None)], [("B1", "200 A", 0)],
+                               tot_expo=(1, 0))
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": filas}))["EZE"]
+        self.assertEqual(eze.avisos_conteo, ())
+
+
+class ManeRepetidoEze(unittest.TestCase):
+    def test_avisa_si_el_mismo_mane_esta_en_dos_filas(self):
+        filas = _eze_con_filas([("A1", "51116 D", 0), ("A2", "51116 D", 0), ("A3", "51117 E", 0)], [("B1", "200 A", 0)])
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": filas}))["EZE"]
+        self.assertEqual(eze.cantidad, 4)
+        self.assertEqual(len(eze.avisos_repetidos), 1)
+        self.assertIn("51116 D", eze.avisos_repetidos[0])
+        self.assertIn("filas 2 y 3", eze.avisos_repetidos[0])
+        self.assertIn("vuelo repetido", eze.avisos_repetidos[0])
+        self.assertEqual(eze.avisos_conteo, ())
+
+    def test_distinto_mane_no_avisa(self):
+        filas = _eze_con_filas([("A1", "100 A", 0), ("A2", "101 B", 0)], [("B1", "100 A", 0)])  # mismo numero pero en el otro bloque
+        eze = leer_vuelos_ariel(_libro({"mani mane EZE": filas}))["EZE"]
+        self.assertEqual(eze.avisos_repetidos, ())
+
+
+@unittest.skipUnless(ARIEL_OCT.exists(), "falta el Ariel de octubre")
+class ControlesConArchivosReales(unittest.TestCase):
+    def test_octubre_desglose_celdas_y_mane_repetido(self):
+        v = leer_vuelos_ariel(ARIEL_OCT)
+        self.assertEqual(v["EZE"].bloques, (("EXPO", 25), ("IMPO", 24)))
+        self.assertEqual((v["EZE"].celda_total, v["MDZ"].celda_total), ("B42", "G30"))
+        self.assertEqual(v["EZE"].avisos_conteo, ())
+        self.assertEqual(len(v["EZE"].avisos_repetidos), 1)
+        self.assertIn("51116 D", v["EZE"].avisos_repetidos[0])
+        self.assertIn("filas 22 y 23", v["EZE"].avisos_repetidos[0])
+        self.assertEqual(v["MDZ"].avisos_repetidos, ())
+
+    @unittest.skipUnless(ARIEL_SEP.exists() and ARIEL_AGO.exists(), "faltan septiembre y agosto")
+    def test_septiembre_y_agosto_no_dan_falsos_avisos(self):
+        for ruta in (ARIEL_SEP, ARIEL_AGO):  # tienen filas "SIN VUELOS" que no son vuelos
+            eze = leer_vuelos_ariel(ruta)["EZE"]
+            self.assertEqual((eze.avisos_conteo, eze.avisos_repetidos), ((), ()), ruta.name)
+
+
 if __name__ == "__main__":
     unittest.main()
